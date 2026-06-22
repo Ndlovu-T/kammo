@@ -1,0 +1,137 @@
+package com.kammo.kammobackend.deal;
+
+import com.kammo.kammobackend.message.CreateMessageRequest;
+import com.kammo.kammobackend.rating.CreateRatingRequest;
+import com.kammo.kammobackend.user.AppUser;
+import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/deals")
+public class DealController {
+
+    private final DealService dealService;
+
+    public DealController(DealService dealService) {
+        this.dealService = dealService;
+    }
+
+    @GetMapping
+    public List<DealResponse> getMyDeals(
+        @AuthenticationPrincipal AppUser user,
+        @RequestParam(required = false) String role
+    ) {
+        return dealService.getMyDeals(user, role);
+    }
+
+    @GetMapping("/seller")
+    public List<DealResponse> getSellerDeals(@AuthenticationPrincipal AppUser user) {
+        return dealService.getSellerDeals(user);
+    }
+
+    @PostMapping
+    public ResponseEntity<DealResponse> createDeal(
+        @AuthenticationPrincipal AppUser user,
+        @Valid @RequestBody CreateDealRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(dealService.createDeal(user, request));
+    }
+
+    @PostMapping("/seller")
+    public ResponseEntity<DealResponse> createSellerDeal(
+        @AuthenticationPrincipal AppUser user,
+        @Valid @RequestBody SellerDealRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(dealService.createSellerDeal(user, request));
+    }
+
+    @GetMapping("/{dealCode}")
+    public DealResponse getDeal(@PathVariable String dealCode) {
+        return dealService.getDeal(dealCode);
+    }
+
+    @PostMapping("/{dealCode}/payment")
+    public DealResponse markPaymentSecured(@PathVariable String dealCode) {
+        return dealService.markPaymentSecured(dealCode);
+    }
+
+    @PostMapping("/{dealCode}/seller/accept")
+    public DealResponse acceptAsSeller(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.acceptAsSeller(user, dealCode);
+    }
+
+    @PostMapping("/{dealCode}/buyer/accept")
+    public DealResponse acceptAsBuyer(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode,
+        @Valid @RequestBody BuyerAcceptDealRequest request
+    ) {
+        return dealService.acceptAsBuyer(user, dealCode, request);
+    }
+
+    @PostMapping("/{dealCode}/seller/ready-for-collection")
+    public DealResponse markReadyForCollection(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.markReadyForCollection(user, dealCode);
+    }
+
+    @PostMapping("/{dealCode}/ship")
+    public DealResponse markInTransit(@PathVariable String dealCode) {
+        return dealService.markInTransit(dealCode);
+    }
+
+    @PostMapping("/{dealCode}/confirm-delivery")
+    public DealResponse confirmDelivery(@PathVariable String dealCode) {
+        return dealService.confirmDelivery(dealCode);
+    }
+
+    @PostMapping("/{dealCode}/disputes")
+    public DealResponse raiseDispute(@PathVariable String dealCode) {
+        return dealService.raiseDispute(dealCode);
+    }
+
+    @GetMapping("/{dealCode}/messages")
+    public List<Map<String, Object>> getMessages(@PathVariable String dealCode) {
+        return dealService.getMessages(dealCode);
+    }
+
+    @PostMapping("/{dealCode}/messages")
+    public ResponseEntity<Map<String, Object>> sendMessage(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode,
+        @Valid @RequestBody CreateMessageRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(dealService.sendMessage(user, dealCode, request));
+    }
+
+    @PostMapping("/{dealCode}/ratings")
+    public ResponseEntity<Map<String, Object>> rateDeal(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode,
+        @Valid @RequestBody CreateRatingRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(dealService.rateDeal(user, dealCode, request));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException exception) {
+        return ResponseEntity.badRequest().body(Map.of("message", exception.getMessage()));
+    }
+}

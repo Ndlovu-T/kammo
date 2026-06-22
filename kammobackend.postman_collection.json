@@ -1,0 +1,152 @@
+﻿{
+  "info": {
+    "_postman_id": "3b269d2f-0c7b-4d7c-a77d-8f78fb3dc568",
+    "name": "kammobackend API",
+    "description": "Postman collection for the KAMMO backend APIs that support the kammo-v2 frontend prototype.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "phoneNumber", "value": "0712345678" },
+    { "key": "email", "value": "user@example.com" },
+    { "key": "password", "value": "password123" },
+    { "key": "token", "value": "" },
+    { "key": "kammoId", "value": "" },
+    { "key": "dealCode", "value": "" },
+    { "key": "listingId", "value": "iphone-14-pro-max" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test(\"Register returns success\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+            "const response = pm.response.json();",
+            "if (response.token) pm.collectionVariables.set(\"token\", response.token);",
+            "if (response.kammoId) pm.collectionVariables.set(\"kammoId\", response.kammoId);"
+          ]}}],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phoneNumber\": \"{{phoneNumber}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "Login User",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test(\"Login returns success\", function () { pm.response.to.have.status(200); });",
+            "const response = pm.response.json();",
+            "if (response.token) pm.collectionVariables.set(\"token\", response.token);",
+            "if (response.kammoId) pm.collectionVariables.set(\"kammoId\", response.kammoId);"
+          ]}}],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phoneNumber\": \"{{phoneNumber}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile & Dashboard",
+      "item": [
+        { "name": "Get My Profile", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/me/profile" } },
+        { "name": "Get Dashboard", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/dashboard" } }
+      ]
+    },
+    {
+      "name": "Marketplace",
+      "item": [
+        { "name": "List Marketplace Listings", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/marketplace/listings?category=all&search=" } },
+        { "name": "Get Listing Detail", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/marketplace/listings/{{listingId}}" } }
+      ]
+    },
+    {
+      "name": "Deals",
+      "item": [
+        {
+          "name": "Create Deal",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test(\"Create deal returns success\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+            "const response = pm.response.json();",
+            "if (response.dealCode) pm.collectionVariables.set(\"dealCode\", response.dealCode);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerRole\": \"BUYER\",\n  \"itemName\": \"iPhone 14 Pro Max 256GB\",\n  \"price\": 8500,\n  \"description\": \"Excellent condition. Battery 97%. Original box and charger included.\",\n  \"otherPartyPhoneNumber\": \"0724449900\",\n  \"deliveryMethod\": \"COURIER\",\n  \"inspectionWindowHours\": 24\n}" },
+            "url": "{{baseUrl}}/api/deals"
+          }
+        },
+        {
+          "name": "Create Seller Deal",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test(\"Create seller deal returns success\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+            "const response = pm.response.json();",
+            "if (response.dealCode) pm.collectionVariables.set(\"dealCode\", response.dealCode);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"itemName\": \"iPhone 14 Pro Max 256GB\",\n  \"price\": 8500,\n  \"description\": \"Excellent condition. Battery 97%. Original box and charger included.\",\n  \"buyerPhoneNumber\": \"0724449900\",\n  \"deliveryMethod\": \"COURIER\",\n  \"inspectionWindowHours\": 24\n}" },
+            "url": "{{baseUrl}}/api/deals/seller"
+          }
+        },
+        { "name": "List My Deals", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals?role=all" } },
+        { "name": "List Seller Deals", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/seller" } },
+        { "name": "Get Deal Detail", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}" } },
+        { "name": "Mark Payment Secured", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/payment" } },
+        {
+          "name": "Buyer Accept Seller Deal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"dealReference\": \"KM-{{dealCode}}\"\n}" },
+            "url": "{{baseUrl}}/api/deals/{{dealCode}}/buyer/accept"
+          }
+        },
+        { "name": "Seller Accept Buyer Deal", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/seller/accept" } },
+        { "name": "Seller Ready For Collection", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/seller/ready-for-collection" } },
+        { "name": "Mark Shipped / In Transit", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/ship" } },
+        { "name": "Confirm Delivery", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/confirm-delivery" } },
+        { "name": "Raise Dispute", "request": { "method": "POST", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/disputes" } }
+      ]
+    },
+    {
+      "name": "Chat & Ratings",
+      "item": [
+        { "name": "List Deal Messages", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": "{{baseUrl}}/api/deals/{{dealCode}}/messages" } },
+        {
+          "name": "Send Deal Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"body\": \"Payment done! Please pack carefully.\"\n}" },
+            "url": "{{baseUrl}}/api/deals/{{dealCode}}/messages"
+          }
+        },
+        {
+          "name": "Rate Deal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"score\": 5,\n  \"comment\": \"Great seller and smooth delivery.\"\n}" },
+            "url": "{{baseUrl}}/api/deals/{{dealCode}}/ratings"
+          }
+        }
+      ]
+    }
+  ]
+}
