@@ -1,0 +1,7 @@
+{
+  "name": "@kammo/core",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "description": "Shared KAMMO API client, utils, and deal business logic (mobile + web)"
+}

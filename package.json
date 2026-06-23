@@ -1,0 +1,36 @@
+{
+  "name": "kammomobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "npx expo start --lan --port 8082",
+    "stop": "powershell -Command \"Get-NetTCPConnection -LocalPort 8082,8083 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\"",
+    "start:tunnel": "npx expo start --tunnel",
+    "android": "npx expo start --android",
+    "ios": "npx expo start --ios",
+    "web": "npx expo start --web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~56.0.13",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~56.0.8",
+    "expo-camera": "~56.0.7",
+    "expo-constants": "~56.0.16",
+    "expo-linking": "~56.0.13",
+    "expo-router": "~56.2.8",
+    "expo-status-bar": "~56.0.4",
+    "lucide-react-native": "^0.511.0",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-gesture-handler": "~2.31.1",
+    "react-native-reanimated": "4.3.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "react-native-svg": "15.15.4",
+    "react-native-worklets": "0.8.3"
+  },
+  "devDependencies": {
+    "babel-preset-expo": "~56.0.0"
+  },
+  "private": true
+}
