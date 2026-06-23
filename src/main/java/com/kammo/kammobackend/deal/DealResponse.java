@@ -58,6 +58,7 @@ public record DealResponse(
             case PAYMENT_SECURED, AWAITING_COLLECTION, IN_TRANSIT, DELIVERED -> "Track delivery and confirm once received.";
             case COMPLETED -> "Rate the seller.";
             case DISPUTED -> "Follow the dispute process.";
+            case REFUNDED -> "You have been refunded.";
         };
     }
 
@@ -72,6 +73,7 @@ public record DealResponse(
             case IN_TRANSIT, DELIVERED -> "Wait for buyer confirmation.";
             case COMPLETED -> "Payout can be released.";
             case DISPUTED -> "Respond to the dispute.";
+            case REFUNDED -> "The buyer was refunded. This deal is closed.";
         };
     }
 }

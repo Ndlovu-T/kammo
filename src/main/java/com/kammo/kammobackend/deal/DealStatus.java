@@ -10,5 +10,6 @@ public enum DealStatus {
     IN_TRANSIT,
     DELIVERED,
     COMPLETED,
-    DISPUTED
+    DISPUTED,
+    REFUNDED
 }

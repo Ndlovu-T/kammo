@@ -9,7 +9,6 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -63,8 +62,11 @@ public class DealController {
     }
 
     @PostMapping("/{dealCode}/payment")
-    public DealResponse markPaymentSecured(@PathVariable String dealCode) {
-        return dealService.markPaymentSecured(dealCode);
+    public DealResponse markPaymentSecured(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.markPaymentSecured(user, dealCode);
     }
 
     @PostMapping("/{dealCode}/seller/accept")
@@ -93,23 +95,35 @@ public class DealController {
     }
 
     @PostMapping("/{dealCode}/ship")
-    public DealResponse markInTransit(@PathVariable String dealCode) {
-        return dealService.markInTransit(dealCode);
+    public DealResponse markInTransit(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.markInTransit(user, dealCode);
     }
 
     @PostMapping("/{dealCode}/confirm-delivery")
-    public DealResponse confirmDelivery(@PathVariable String dealCode) {
-        return dealService.confirmDelivery(dealCode);
+    public DealResponse confirmDelivery(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.confirmDelivery(user, dealCode);
     }
 
     @PostMapping("/{dealCode}/disputes")
-    public DealResponse raiseDispute(@PathVariable String dealCode) {
-        return dealService.raiseDispute(dealCode);
+    public DealResponse raiseDispute(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.raiseDispute(user, dealCode);
     }
 
     @GetMapping("/{dealCode}/messages")
-    public List<Map<String, Object>> getMessages(@PathVariable String dealCode) {
-        return dealService.getMessages(dealCode);
+    public List<Map<String, Object>> getMessages(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.getMessages(user, dealCode);
     }
 
     @PostMapping("/{dealCode}/messages")
@@ -128,10 +142,5 @@ public class DealController {
         @Valid @RequestBody CreateRatingRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(dealService.rateDeal(user, dealCode, request));
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException exception) {
-        return ResponseEntity.badRequest().body(Map.of("message", exception.getMessage()));
     }
 }

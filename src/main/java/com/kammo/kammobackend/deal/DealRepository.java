@@ -13,4 +13,6 @@ public interface DealRepository extends JpaRepository<Deal, Long> {
     Optional<Deal> findByDealCode(String dealCode);
 
     boolean existsByDealCode(String dealCode);
+
+    List<Deal> findByStatusOrderByCreatedAtDesc(DealStatus status);
 }

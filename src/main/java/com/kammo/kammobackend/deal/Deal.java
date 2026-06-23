@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -59,6 +60,9 @@ public class Deal {
     private Instant createdAt = Instant.now();
 
     private Instant updatedAt = Instant.now();
+
+    @Version
+    private Long version;
 
     protected Deal() {
     }
@@ -139,6 +143,10 @@ public class Deal {
 
     public Instant getUpdatedAt() {
         return updatedAt;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 
     public void setStatus(DealStatus status) {

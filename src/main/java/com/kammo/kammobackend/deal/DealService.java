@@ -3,6 +3,9 @@ package com.kammo.kammobackend.deal;
 import com.kammo.kammobackend.message.CreateMessageRequest;
 import com.kammo.kammobackend.message.DealMessage;
 import com.kammo.kammobackend.message.DealMessageRepository;
+import com.kammo.kammobackend.payment.PaymentResult;
+import com.kammo.kammobackend.payment.PaymentService;
+import com.kammo.kammobackend.payment.PaymentStatus;
 import com.kammo.kammobackend.rating.CreateRatingRequest;
 import com.kammo.kammobackend.rating.DealRating;
 import com.kammo.kammobackend.rating.DealRatingRepository;
@@ -21,17 +24,20 @@ public class DealService {
     private final DealCodeGenerator dealCodeGenerator;
     private final DealMessageRepository messageRepository;
     private final DealRatingRepository ratingRepository;
+    private final PaymentService paymentService;
 
     public DealService(
         DealRepository dealRepository,
         DealCodeGenerator dealCodeGenerator,
         DealMessageRepository messageRepository,
-        DealRatingRepository ratingRepository
+        DealRatingRepository ratingRepository,
+        PaymentService paymentService
     ) {
         this.dealRepository = dealRepository;
         this.dealCodeGenerator = dealCodeGenerator;
         this.messageRepository = messageRepository;
         this.ratingRepository = ratingRepository;
+        this.paymentService = paymentService;
     }
 
     @Transactional
@@ -100,8 +106,20 @@ public class DealService {
     }
 
     @Transactional
-    public DealResponse markPaymentSecured(String dealCode) {
+    public DealResponse markPaymentSecured(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        if (deal.getStatus() != DealStatus.AWAITING_BUYER_PAYMENT
+            && deal.getStatus() != DealStatus.BUYER_ACCEPTED
+            && deal.getStatus() != DealStatus.SELLER_ACCEPTED) {
+            throw new IllegalArgumentException("This deal is not awaiting payment");
+        }
+
+        PaymentResult result = paymentService.charge(deal, user);
+        if (result.status() == PaymentStatus.FAILED) {
+            throw new IllegalArgumentException("Payment failed: " + result.message());
+        }
+
         deal.setStatus(DealStatus.PAYMENT_SECURED);
         if (deal.getDeliveryMethod() == DeliveryMethod.COURIER && deal.getWaybillNumber() == null) {
             deal.setWaybillNumber("TCG-" + deal.getDealCode() + "-001");
@@ -157,8 +175,13 @@ public class DealService {
     }
 
     @Transactional
-    public DealResponse markInTransit(String dealCode) {
+    public DealResponse markInTransit(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
+        requireSellerAccess(user, deal);
+        if (deal.getStatus() != DealStatus.AWAITING_COLLECTION) {
+            throw new IllegalArgumentException("This deal is not awaiting collection");
+        }
+
         deal.setStatus(DealStatus.IN_TRANSIT);
         if (deal.getWaybillNumber() == null) {
             deal.setWaybillNumber("TCG-" + deal.getDealCode() + "-001");
@@ -167,21 +190,57 @@ public class DealService {
     }
 
     @Transactional
-    public DealResponse confirmDelivery(String dealCode) {
+    public DealResponse confirmDelivery(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        if (deal.getStatus() != DealStatus.IN_TRANSIT && deal.getStatus() != DealStatus.AWAITING_COLLECTION) {
+            throw new IllegalArgumentException("This deal is not in transit or awaiting collection");
+        }
+
         deal.setStatus(DealStatus.COMPLETED);
+        paymentService.payout(deal);
         return DealResponse.from(deal);
     }
 
     @Transactional
-    public DealResponse raiseDispute(String dealCode) {
+    public DealResponse raiseDispute(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
+        if (deal.getStatus() == DealStatus.COMPLETED || deal.getStatus() == DealStatus.DISPUTED) {
+            throw new IllegalArgumentException("This deal cannot be disputed in its current state");
+        }
+
         deal.setStatus(DealStatus.DISPUTED);
         return DealResponse.from(deal);
     }
 
-    public List<Map<String, Object>> getMessages(String dealCode) {
+    public List<DealResponse> getDisputedDeals() {
+        return dealRepository.findByStatusOrderByCreatedAtDesc(DealStatus.DISPUTED).stream()
+            .map(DealResponse::from)
+            .toList();
+    }
+
+    @Transactional
+    public DealResponse resolveDispute(String dealCode, DisputeResolution resolution) {
         Deal deal = findDeal(dealCode);
+        if (deal.getStatus() != DealStatus.DISPUTED) {
+            throw new IllegalArgumentException("This deal is not under dispute");
+        }
+
+        if (resolution == DisputeResolution.RELEASE_SELLER) {
+            paymentService.payout(deal);
+            deal.setStatus(DealStatus.COMPLETED);
+        } else if (resolution == DisputeResolution.REFUND_BUYER) {
+            paymentService.refund(deal);
+            deal.setStatus(DealStatus.REFUNDED);
+        }
+
+        return DealResponse.from(deal);
+    }
+
+    public List<Map<String, Object>> getMessages(AppUser user, String dealCode) {
+        Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
         return messageRepository.findByDealIdOrderByCreatedAtAsc(deal.getId()).stream()
             .map(message -> Map.<String, Object>of(
                 "id", message.getId(),
@@ -195,6 +254,7 @@ public class DealService {
     @Transactional
     public Map<String, Object> sendMessage(AppUser user, String dealCode, CreateMessageRequest request) {
         Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
         DealMessage message = messageRepository.save(new DealMessage(deal.getId(), user.getId(), request.body()));
         return Map.of(
             "id", message.getId(),
@@ -207,6 +267,14 @@ public class DealService {
     @Transactional
     public Map<String, Object> rateDeal(AppUser user, String dealCode, CreateRatingRequest request) {
         Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
+        if (deal.getStatus() != DealStatus.COMPLETED) {
+            throw new IllegalArgumentException("Only completed deals can be rated");
+        }
+        if (ratingRepository.existsByDealIdAndRaterUserId(deal.getId(), user.getId())) {
+            throw new IllegalArgumentException("You have already rated this deal");
+        }
+
         DealRating rating = ratingRepository.save(
             new DealRating(deal.getId(), user.getId(), request.score(), request.comment())
         );
@@ -238,6 +306,14 @@ public class DealService {
         boolean buyerCreatedDeal = deal.getOwnerRole() == DealRole.BUYER && deal.getOwnerUserId().equals(user.getId());
         if (!sellerInvitedBuyer && !buyerCreatedDeal) {
             throw new IllegalArgumentException("Only the buyer can perform this action");
+        }
+    }
+
+    private void requireParticipant(AppUser user, Deal deal) {
+        boolean isOwner = deal.getOwnerUserId().equals(user.getId());
+        boolean isInvitedOtherParty = deal.getOtherPartyPhoneNumber().equals(user.getPhoneNumber());
+        if (!isOwner && !isInvitedOtherParty) {
+            throw new IllegalArgumentException("Only a participant in this deal can perform this action");
         }
     }
 }

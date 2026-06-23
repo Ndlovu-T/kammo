@@ -1,0 +1,108 @@
+package com.kammo.kammobackend.payment;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.kammo.kammobackend.deal.Deal;
+import com.kammo.kammobackend.deal.DealRole;
+import com.kammo.kammobackend.deal.DeliveryMethod;
+import com.kammo.kammobackend.user.AppUser;
+import java.math.BigDecimal;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+class PaymentServiceTest {
+
+    @Mock
+    private PaymentProvider paymentProvider;
+
+    @Mock
+    private PaymentRepository paymentRepository;
+
+    @Captor
+    private ArgumentCaptor<PaymentRecord> paymentRecordCaptor;
+
+    private PaymentService paymentService;
+
+    private AppUser buyer;
+
+    @BeforeEach
+    void setUp() {
+        paymentService = new PaymentService(paymentProvider, paymentRepository);
+        buyer = new AppUser("KM0001", "0710000001", "buyer@example.com", "hashed");
+        ReflectionTestUtils.setField(buyer, "id", 1L);
+    }
+
+    private Deal dealWith(BigDecimal price, DeliveryMethod deliveryMethod) {
+        Deal deal = new Deal(
+            "DEAL0001",
+            1L,
+            DealRole.BUYER,
+            "Widget",
+            price,
+            "A widget",
+            "0710000002",
+            deliveryMethod,
+            24
+        );
+        ReflectionTestUtils.setField(deal, "id", 10L);
+        return deal;
+    }
+
+    @Test
+    void charge_persistsTotalToPayIncludingFeeAndCourierFee() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.COURIER);
+        when(paymentProvider.charge(deal, buyer))
+            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+
+        paymentService.charge(deal, buyer);
+
+        verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("221.00"));
+    }
+
+    @Test
+    void charge_persistsTotalToPayWithoutCourierFeeForMeetup() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
+        when(paymentProvider.charge(deal, buyer))
+            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+
+        paymentService.charge(deal, buyer);
+
+        verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("101.00"));
+    }
+
+    @Test
+    void payout_persistsPriceOnlyWithNoFees() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.COURIER);
+        when(paymentProvider.payout(deal)).thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-2", "ok"));
+
+        paymentService.payout(deal);
+
+        verifySavedRecordMatches(PaymentRecordType.PAYOUT, new BigDecimal("100.00"));
+    }
+
+    @Test
+    void refund_persistsChargeTotal() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.COURIER);
+        when(paymentProvider.refund(deal)).thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-3", "ok"));
+
+        paymentService.refund(deal);
+
+        verifySavedRecordMatches(PaymentRecordType.REFUND, new BigDecimal("221.00"));
+    }
+
+    private void verifySavedRecordMatches(PaymentRecordType expectedType, BigDecimal expectedAmount) {
+        verify(paymentRepository).save(paymentRecordCaptor.capture());
+        PaymentRecord saved = paymentRecordCaptor.getValue();
+        assertThat(saved.getType()).isEqualTo(expectedType);
+        assertThat(saved.getAmount()).isEqualByComparingTo(expectedAmount);
+    }
+}
