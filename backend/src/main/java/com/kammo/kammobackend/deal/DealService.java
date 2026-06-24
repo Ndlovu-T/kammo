@@ -1,5 +1,9 @@
 package com.kammo.kammobackend.deal;
 
+import com.kammo.kammobackend.delivery.DeliveryProvider;
+import com.kammo.kammobackend.delivery.ShipmentResult;
+import com.kammo.kammobackend.delivery.ShipmentStatus;
+import com.kammo.kammobackend.delivery.TrackingResult;
 import com.kammo.kammobackend.message.CreateMessageRequest;
 import com.kammo.kammobackend.message.DealMessage;
 import com.kammo.kammobackend.message.DealMessageRepository;
@@ -10,38 +14,64 @@ import com.kammo.kammobackend.rating.CreateRatingRequest;
 import com.kammo.kammobackend.rating.DealRating;
 import com.kammo.kammobackend.rating.DealRatingRepository;
 import com.kammo.kammobackend.user.AppUser;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DealService {
 
+    private static final List<DealStatus> CANCELLABLE_STATUSES = List.of(
+        DealStatus.CREATED,
+        DealStatus.AWAITING_BUYER_PAYMENT,
+        DealStatus.BUYER_ACCEPTED,
+        DealStatus.SELLER_ACCEPTED
+    );
+
     private final DealRepository dealRepository;
     private final DealCodeGenerator dealCodeGenerator;
     private final DealMessageRepository messageRepository;
     private final DealRatingRepository ratingRepository;
     private final PaymentService paymentService;
+    private final DeliveryProvider deliveryProvider;
+    private final ApplicationEventPublisher eventPublisher;
 
     public DealService(
         DealRepository dealRepository,
         DealCodeGenerator dealCodeGenerator,
         DealMessageRepository messageRepository,
         DealRatingRepository ratingRepository,
-        PaymentService paymentService
+        PaymentService paymentService,
+        DeliveryProvider deliveryProvider,
+        ApplicationEventPublisher eventPublisher
     ) {
         this.dealRepository = dealRepository;
         this.dealCodeGenerator = dealCodeGenerator;
         this.messageRepository = messageRepository;
         this.ratingRepository = ratingRepository;
         this.paymentService = paymentService;
+        this.deliveryProvider = deliveryProvider;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
     public DealResponse createDeal(AppUser user, CreateDealRequest request) {
+        return DealResponse.from(buildAndSaveDeal(user, request, null));
+    }
+
+    @Transactional
+    public DealResponse createDealForListing(AppUser user, CreateDealRequest request, Long listingId) {
+        return DealResponse.from(buildAndSaveDeal(user, request, listingId));
+    }
+
+    private Deal buildAndSaveDeal(AppUser user, CreateDealRequest request, Long listingId) {
+        validateAddresses(request.deliveryMethod(), request.collectionAddress(), request.deliveryAddress());
         Deal deal = new Deal(
             dealCodeGenerator.generateUniqueDealCode(),
             user.getId(),
@@ -51,17 +81,21 @@ public class DealService {
             request.description(),
             request.otherPartyPhoneNumber(),
             request.deliveryMethod(),
-            request.inspectionWindowHours()
+            request.inspectionWindowHours(),
+            Address.from(request.collectionAddress()),
+            Address.from(request.deliveryAddress())
         );
+        deal.setListingId(listingId);
         if (request.ownerRole() == DealRole.SELLER) {
             deal.setStatus(DealStatus.AWAITING_BUYER_PAYMENT);
         }
 
-        return DealResponse.from(dealRepository.save(deal));
+        return dealRepository.save(deal);
     }
 
     @Transactional
     public DealResponse createSellerDeal(AppUser user, SellerDealRequest request) {
+        validateAddresses(request.deliveryMethod(), request.collectionAddress(), request.deliveryAddress());
         Deal deal = new Deal(
             dealCodeGenerator.generateUniqueDealCode(),
             user.getId(),
@@ -71,11 +105,58 @@ public class DealService {
             request.description(),
             request.buyerPhoneNumber(),
             request.deliveryMethod(),
-            request.inspectionWindowHours()
+            request.inspectionWindowHours(),
+            Address.from(request.collectionAddress()),
+            Address.from(request.deliveryAddress())
         );
         deal.setStatus(DealStatus.AWAITING_BUYER_PAYMENT);
 
         return DealResponse.from(dealRepository.save(deal));
+    }
+
+    private void validateAddresses(DeliveryMethod deliveryMethod, DealAddressRequest collectionAddress, DealAddressRequest deliveryAddress) {
+        if (deliveryMethod == DeliveryMethod.MEETUP) {
+            return;
+        }
+        requireUsableAddress(collectionAddress, "collection");
+        requireUsableAddress(deliveryAddress, "delivery");
+    }
+
+    private void requireUsableAddress(DealAddressRequest address, String label) {
+        if (address == null) {
+            throw new IllegalArgumentException(
+                "A " + label + " address or PUDO locker is required for courier and locker deliveries"
+            );
+        }
+        if (address.lockerTerminalId() != null && !address.lockerTerminalId().isBlank()) {
+            return;
+        }
+        boolean missingStreetDetails = isBlank(address.line1())
+            || isBlank(address.city())
+            || isBlank(address.province())
+            || isBlank(address.postalCode())
+            || isBlank(address.contactName())
+            || isBlank(address.contactPhone());
+        if (missingStreetDetails) {
+            throw new IllegalArgumentException(
+                "The " + label + " address needs a street address, city, province, postal code and contact details, or a PUDO locker"
+            );
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private void assignWaybillIfNeeded(Deal deal) {
+        if (deal.getDeliveryMethod() == DeliveryMethod.MEETUP || deal.getWaybillNumber() != null) {
+            return;
+        }
+        ShipmentResult shipment = deliveryProvider.createShipment(deal);
+        if (shipment.status() == ShipmentStatus.FAILED) {
+            throw new IllegalArgumentException("Failed to create delivery shipment: " + shipment.message());
+        }
+        deal.setWaybillNumber(shipment.waybillNumber());
     }
 
     public List<DealResponse> getMyDeals(AppUser user, String role) {
@@ -109,22 +190,43 @@ public class DealService {
     public DealResponse markPaymentSecured(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
         requireBuyerAccess(user, deal);
-        if (deal.getStatus() != DealStatus.AWAITING_BUYER_PAYMENT
-            && deal.getStatus() != DealStatus.BUYER_ACCEPTED
-            && deal.getStatus() != DealStatus.SELLER_ACCEPTED) {
-            throw new IllegalArgumentException("This deal is not awaiting payment");
-        }
+        requireAwaitingPayment(deal);
 
         PaymentResult result = paymentService.charge(deal, user);
         if (result.status() == PaymentStatus.FAILED) {
             throw new IllegalArgumentException("Payment failed: " + result.message());
         }
+        if (result.status() == PaymentStatus.PENDING) {
+            return DealResponse.from(deal, result.checkoutUrl());
+        }
 
         deal.setStatus(DealStatus.PAYMENT_SECURED);
-        if (deal.getDeliveryMethod() == DeliveryMethod.COURIER && deal.getWaybillNumber() == null) {
-            deal.setWaybillNumber("TCG-" + deal.getDealCode() + "-001");
-        }
+        assignWaybillIfNeeded(deal);
         return DealResponse.from(deal);
+    }
+
+    @Transactional
+    public DealResponse confirmPayment(AppUser user, String dealCode, String providerReference) {
+        Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        requireAwaitingPayment(deal);
+
+        PaymentResult result = paymentService.verifyCharge(deal, providerReference);
+        if (result.status() != PaymentStatus.SUCCEEDED) {
+            throw new IllegalArgumentException("Payment could not be confirmed: " + result.message());
+        }
+
+        deal.setStatus(DealStatus.PAYMENT_SECURED);
+        assignWaybillIfNeeded(deal);
+        return DealResponse.from(deal);
+    }
+
+    private void requireAwaitingPayment(Deal deal) {
+        if (deal.getStatus() != DealStatus.AWAITING_BUYER_PAYMENT
+            && deal.getStatus() != DealStatus.BUYER_ACCEPTED
+            && deal.getStatus() != DealStatus.SELLER_ACCEPTED) {
+            throw new IllegalArgumentException("This deal is not awaiting payment");
+        }
     }
 
     @Transactional
@@ -168,9 +270,7 @@ public class DealService {
         }
 
         deal.setStatus(DealStatus.AWAITING_COLLECTION);
-        if (deal.getDeliveryMethod() == DeliveryMethod.COURIER && deal.getWaybillNumber() == null) {
-            deal.setWaybillNumber("TCG-" + deal.getDealCode() + "-001");
-        }
+        assignWaybillIfNeeded(deal);
         return DealResponse.from(deal);
     }
 
@@ -183,9 +283,20 @@ public class DealService {
         }
 
         deal.setStatus(DealStatus.IN_TRANSIT);
-        if (deal.getWaybillNumber() == null) {
-            deal.setWaybillNumber("TCG-" + deal.getDealCode() + "-001");
+        assignWaybillIfNeeded(deal);
+        return DealResponse.from(deal);
+    }
+
+    @Transactional
+    public DealResponse markDelivered(AppUser user, String dealCode) {
+        Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        if (deal.getStatus() != DealStatus.IN_TRANSIT) {
+            throw new IllegalArgumentException("This deal is not in transit");
         }
+
+        deal.setStatus(DealStatus.DELIVERED);
+        deal.setDeliveredAt(Instant.now());
         return DealResponse.from(deal);
     }
 
@@ -193,8 +304,10 @@ public class DealService {
     public DealResponse confirmDelivery(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
         requireBuyerAccess(user, deal);
-        if (deal.getStatus() != DealStatus.IN_TRANSIT && deal.getStatus() != DealStatus.AWAITING_COLLECTION) {
-            throw new IllegalArgumentException("This deal is not in transit or awaiting collection");
+        if (deal.getStatus() != DealStatus.IN_TRANSIT
+            && deal.getStatus() != DealStatus.AWAITING_COLLECTION
+            && deal.getStatus() != DealStatus.DELIVERED) {
+            throw new IllegalArgumentException("This deal is not in transit, delivered or awaiting collection");
         }
 
         deal.setStatus(DealStatus.COMPLETED);
@@ -203,11 +316,35 @@ public class DealService {
     }
 
     @Transactional
+    public DealResponse cancelDeal(AppUser user, String dealCode) {
+        Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
+        if (!CANCELLABLE_STATUSES.contains(deal.getStatus())) {
+            throw new IllegalArgumentException("This deal can no longer be cancelled");
+        }
+
+        deal.setStatus(DealStatus.CANCELLED);
+        if (deal.getListingId() != null) {
+            eventPublisher.publishEvent(new DealCancelledEvent(deal.getListingId()));
+        }
+        return DealResponse.from(deal);
+    }
+
+    @Transactional
     public DealResponse raiseDispute(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
         requireParticipant(user, deal);
-        if (deal.getStatus() == DealStatus.COMPLETED || deal.getStatus() == DealStatus.DISPUTED) {
+        if (deal.getStatus() == DealStatus.COMPLETED
+            || deal.getStatus() == DealStatus.DISPUTED
+            || deal.getStatus() == DealStatus.CANCELLED
+            || deal.getStatus() == DealStatus.REFUNDED) {
             throw new IllegalArgumentException("This deal cannot be disputed in its current state");
+        }
+        if (deal.getDeliveredAt() != null) {
+            Instant windowExpiry = deal.getDeliveredAt().plus(deal.getInspectionWindowHours(), ChronoUnit.HOURS);
+            if (Instant.now().isAfter(windowExpiry)) {
+                throw new IllegalArgumentException("The inspection window for this deal has expired");
+            }
         }
 
         deal.setStatus(DealStatus.DISPUTED);
@@ -236,6 +373,15 @@ public class DealService {
         }
 
         return DealResponse.from(deal);
+    }
+
+    public TrackingResult getTracking(AppUser user, String dealCode) {
+        Deal deal = findDeal(dealCode);
+        requireParticipant(user, deal);
+        if (deal.getWaybillNumber() == null) {
+            throw new IllegalArgumentException("No shipment has been created for this deal yet");
+        }
+        return deliveryProvider.trackShipment(deal.getWaybillNumber());
     }
 
     public List<Map<String, Object>> getMessages(AppUser user, String dealCode) {

@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
-import { Link2, Package } from "lucide-react-native";
+import { Link2, Lock, Package } from "lucide-react-native";
 import ProgressBar from "../../src/components/ProgressBar";
 import WizardHeader from "../../src/components/WizardHeader";
 import { Button, Card, ErrorText, Screen, Subtitle, Title } from "../../src/components/ui";
@@ -12,8 +12,10 @@ export default function CreateDealReview() {
   const { createDraft, submitCreateDeal, busy, error } = useKammo();
   const price = Number(createDraft.price) || 0;
   const fee = price * 0.01;
-  const courier = createDraft.delivery === "courier" ? 120 : 0;
+  const courier = createDraft.delivery !== "meetup" ? 120 : 0;
   const total = price + fee + courier;
+  const deliveryLabel =
+    createDraft.delivery === "locker" ? "PUDO Locker" : createDraft.delivery === "meetup" ? "Meetup" : "Courier";
 
   async function onCreate() {
     try {
@@ -45,7 +47,7 @@ export default function CreateDealReview() {
             <Text style={styles.dealLbl}>Delivery</Text>
             <View style={styles.delRow}>
               <Package color={colors.white} size={13} />
-              <Text style={styles.delTxt}>{createDraft.delivery === "courier" ? "Courier" : "Meetup"}</Text>
+              <Text style={styles.delTxt}>{deliveryLabel}</Text>
             </View>
           </View>
         </View>
@@ -57,7 +59,7 @@ export default function CreateDealReview() {
 
       <Card>
         <Text style={styles.feeTitle}>Fee breakdown</Text>
-        {[["Item price", formatRand(price)], ["KAMMO fee (1%)", formatRand(fee)], ["Courier (est.)", formatRand(courier)]].map(([k, v]) => (
+        {[["Item price", formatRand(price)], ["KAMMO fee (1%)", formatRand(fee)], ["Delivery (est.)", formatRand(courier)]].map(([k, v]) => (
           <View key={k} style={styles.feeRow}>
             <Text style={styles.feeKey}>{k}</Text>
             <Text style={styles.feeVal}>{v}</Text>

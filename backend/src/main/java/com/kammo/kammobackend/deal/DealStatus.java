@@ -11,5 +11,6 @@ public enum DealStatus {
     DELIVERED,
     COMPLETED,
     DISPUTED,
-    REFUNDED
+    REFUNDED,
+    CANCELLED
 }

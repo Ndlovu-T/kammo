@@ -73,12 +73,33 @@ export function getDealActions(deal, userPhone) {
   return actions;
 }
 
+function addressIsUsable(address) {
+  if (!address) return false;
+  return Boolean(
+    address.line1?.trim() &&
+      address.city?.trim() &&
+      address.province?.trim() &&
+      address.postalCode?.trim() &&
+      address.contactName?.trim() &&
+      address.contactPhone?.trim()
+  );
+}
+
 export function validateCreateDraft(draft) {
   if (!draft.itemName?.trim()) return "Item name is required";
   if (!draft.price || Number(draft.price) < 1) return "Price must be at least R 1";
   if (!draft.description?.trim()) return "Description is required";
   if (!draft.otherPhone?.trim()) return "Other party phone is required";
   if (!normalizePhone(draft.otherPhone)) return "Enter a valid SA mobile number";
+
+  if (draft.delivery === "courier") {
+    if (!addressIsUsable(draft.collectionAddress)) return "Add a complete collection address";
+    if (!addressIsUsable(draft.deliveryAddress)) return "Add a complete delivery address";
+  }
+  if (draft.delivery === "locker") {
+    if (!draft.collectionLocker) return "Choose a drop-off locker";
+    if (!draft.deliveryLocker) return "Choose a pickup locker";
+  }
   return "";
 }
 

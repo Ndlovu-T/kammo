@@ -5,6 +5,7 @@ export default function CreateDealLayout() {
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#ffffff" } }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="details" />
+      <Stack.Screen name="locker" />
       <Stack.Screen name="success" />
     </Stack>
   );

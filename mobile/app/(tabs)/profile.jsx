@@ -21,7 +21,7 @@ function MenuRow({ icon, title, sub, onPress, danger, trailing }) {
 }
 
 export default function ProfileTab() {
-  const { profile, displayName, logout } = useKammo();
+  const { profile, bankAccount, displayName, logout } = useKammo();
   const [copied, setCopied] = useState(false);
   const trustScore = profile?.trustScore ?? 96;
   const kammoId = profile?.kammoId?.startsWith("KAM-")
@@ -100,6 +100,12 @@ export default function ProfileTab() {
           title="Wallet & Payments"
           sub="Balance · History · Bank accounts"
           onPress={() => router.push("/(tabs)/wallet")}
+        />
+        <MenuRow
+          icon={<CreditCard color={colors.green} size={17} />}
+          title="Bank Account"
+          sub={bankAccount?.configured ? `${bankAccount.bankAccountName} · ${bankAccount.maskedAccountNumber}` : "Add a payout account"}
+          onPress={() => router.push("/wallet/bank-account")}
         />
         <MenuRow
           icon={<Lock color={colors.green} size={17} />}

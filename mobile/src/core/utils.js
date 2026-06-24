@@ -13,7 +13,48 @@ export function formatRand(amount) {
 }
 
 export function deliveryToApi(ui) {
-  return ui === "meetup" ? "MEETUP" : "COURIER";
+  if (ui === "meetup") return "MEETUP";
+  if (ui === "locker") return "PUDO_LOCKER";
+  return "COURIER";
+}
+
+export const emptyAddress = {
+  line1: "",
+  line2: "",
+  city: "",
+  province: "",
+  postalCode: "",
+  contactName: "",
+  contactPhone: "",
+  contactEmail: "",
+};
+
+export function lockerToAddressPayload(locker) {
+  if (!locker) return null;
+  return {
+    line1: locker.name,
+    line2: locker.line1,
+    city: locker.city,
+    province: locker.province,
+    postalCode: locker.postalCode,
+    lockerTerminalId: locker.id,
+  };
+}
+
+export function addressToPayload(address) {
+  if (!address) return null;
+  const trimmed = {
+    line1: address.line1?.trim() || "",
+    line2: address.line2?.trim() || "",
+    city: address.city?.trim() || "",
+    province: address.province?.trim() || "",
+    postalCode: address.postalCode?.trim() || "",
+    contactName: address.contactName?.trim() || "",
+    contactPhone: normalizePhone(address.contactPhone) || "",
+    contactEmail: address.contactEmail?.trim() || "",
+  };
+  const hasContent = Object.values(trimmed).some(Boolean);
+  return hasContent ? trimmed : null;
 }
 
 export function statusLabel(status) {
@@ -59,4 +100,8 @@ export const defaultCreateDraft = {
   otherPhone: "",
   delivery: "courier",
   inspectionHours: 24,
+  collectionAddress: { ...emptyAddress },
+  deliveryAddress: { ...emptyAddress },
+  collectionLocker: null,
+  deliveryLocker: null,
 };

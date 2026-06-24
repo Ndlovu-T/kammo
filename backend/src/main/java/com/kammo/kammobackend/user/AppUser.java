@@ -42,6 +42,18 @@ public class AppUser implements UserDetails {
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
+    @Column(length = 10)
+    private String bankCode;
+
+    @Column(length = 20)
+    private String bankAccountNumber;
+
+    @Column(length = 100)
+    private String bankAccountName;
+
+    @Column(length = 50)
+    private String paystackRecipientCode;
+
     protected AppUser() {
     }
 
@@ -78,6 +90,37 @@ public class AppUser implements UserDetails {
 
     public void promoteToAdmin() {
         this.role = Role.ADMIN;
+    }
+
+    public String getBankCode() {
+        return bankCode;
+    }
+
+    public String getBankAccountNumber() {
+        return bankAccountNumber;
+    }
+
+    public String getBankAccountName() {
+        return bankAccountName;
+    }
+
+    public boolean hasBankAccount() {
+        return bankCode != null && bankAccountNumber != null;
+    }
+
+    public void updateBankAccount(String bankCode, String bankAccountNumber, String bankAccountName) {
+        this.bankCode = bankCode;
+        this.bankAccountNumber = bankAccountNumber;
+        this.bankAccountName = bankAccountName;
+        this.paystackRecipientCode = null;
+    }
+
+    public String getPaystackRecipientCode() {
+        return paystackRecipientCode;
+    }
+
+    public void setPaystackRecipientCode(String paystackRecipientCode) {
+        this.paystackRecipientCode = paystackRecipientCode;
     }
 
     @Override

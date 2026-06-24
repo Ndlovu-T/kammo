@@ -1,6 +1,9 @@
 package com.kammo.kammobackend.deal;
 
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -49,12 +52,48 @@ public class Deal {
     @Column(nullable = false)
     private Integer inspectionWindowHours;
 
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "line1", column = @Column(name = "collection_line1", length = 160)),
+        @AttributeOverride(name = "line2", column = @Column(name = "collection_line2", length = 160)),
+        @AttributeOverride(name = "city", column = @Column(name = "collection_city", length = 80)),
+        @AttributeOverride(name = "province", column = @Column(name = "collection_province", length = 80)),
+        @AttributeOverride(name = "postalCode", column = @Column(name = "collection_postal_code", length = 12)),
+        @AttributeOverride(name = "latitude", column = @Column(name = "collection_latitude")),
+        @AttributeOverride(name = "longitude", column = @Column(name = "collection_longitude")),
+        @AttributeOverride(name = "contactName", column = @Column(name = "collection_contact_name", length = 100)),
+        @AttributeOverride(name = "contactPhone", column = @Column(name = "collection_contact_phone", length = 30)),
+        @AttributeOverride(name = "contactEmail", column = @Column(name = "collection_contact_email", length = 160)),
+        @AttributeOverride(name = "lockerTerminalId", column = @Column(name = "collection_locker_terminal_id", length = 40))
+    })
+    private Address collectionAddress;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "line1", column = @Column(name = "delivery_line1", length = 160)),
+        @AttributeOverride(name = "line2", column = @Column(name = "delivery_line2", length = 160)),
+        @AttributeOverride(name = "city", column = @Column(name = "delivery_city", length = 80)),
+        @AttributeOverride(name = "province", column = @Column(name = "delivery_province", length = 80)),
+        @AttributeOverride(name = "postalCode", column = @Column(name = "delivery_postal_code", length = 12)),
+        @AttributeOverride(name = "latitude", column = @Column(name = "delivery_latitude")),
+        @AttributeOverride(name = "longitude", column = @Column(name = "delivery_longitude")),
+        @AttributeOverride(name = "contactName", column = @Column(name = "delivery_contact_name", length = 100)),
+        @AttributeOverride(name = "contactPhone", column = @Column(name = "delivery_contact_phone", length = 30)),
+        @AttributeOverride(name = "contactEmail", column = @Column(name = "delivery_contact_email", length = 160)),
+        @AttributeOverride(name = "lockerTerminalId", column = @Column(name = "delivery_locker_terminal_id", length = 40))
+    })
+    private Address deliveryAddress;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private DealStatus status = DealStatus.CREATED;
 
     @Column(length = 40)
     private String waybillNumber;
+
+    private Long listingId;
+
+    private Instant deliveredAt;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
@@ -76,7 +115,9 @@ public class Deal {
         String description,
         String otherPartyPhoneNumber,
         DeliveryMethod deliveryMethod,
-        Integer inspectionWindowHours
+        Integer inspectionWindowHours,
+        Address collectionAddress,
+        Address deliveryAddress
     ) {
         this.dealCode = dealCode;
         this.ownerUserId = ownerUserId;
@@ -87,6 +128,8 @@ public class Deal {
         this.otherPartyPhoneNumber = otherPartyPhoneNumber;
         this.deliveryMethod = deliveryMethod;
         this.inspectionWindowHours = inspectionWindowHours;
+        this.collectionAddress = collectionAddress;
+        this.deliveryAddress = deliveryAddress;
     }
 
     public Long getId() {
@@ -129,12 +172,37 @@ public class Deal {
         return inspectionWindowHours;
     }
 
+    public Address getCollectionAddress() {
+        return collectionAddress;
+    }
+
+    public Address getDeliveryAddress() {
+        return deliveryAddress;
+    }
+
     public DealStatus getStatus() {
         return status;
     }
 
     public String getWaybillNumber() {
         return waybillNumber;
+    }
+
+    public Long getListingId() {
+        return listingId;
+    }
+
+    public void setListingId(Long listingId) {
+        this.listingId = listingId;
+    }
+
+    public Instant getDeliveredAt() {
+        return deliveredAt;
+    }
+
+    public void setDeliveredAt(Instant deliveredAt) {
+        this.deliveredAt = deliveredAt;
+        this.updatedAt = Instant.now();
     }
 
     public Instant getCreatedAt() {

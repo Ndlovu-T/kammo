@@ -51,7 +51,9 @@ class PaymentServiceTest {
             "A widget",
             "0710000002",
             deliveryMethod,
-            24
+            24,
+            null,
+            null
         );
         ReflectionTestUtils.setField(deal, "id", 10L);
         return deal;
@@ -75,6 +77,16 @@ class PaymentServiceTest {
             .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
 
         paymentService.charge(deal, buyer);
+
+        verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("101.00"));
+    }
+
+    @Test
+    void verifyCharge_persistsResultAsChargeRecord() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
+        when(paymentProvider.verifyCharge("ref-1")).thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+
+        paymentService.verifyCharge(deal, "ref-1");
 
         verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("101.00"));
     }

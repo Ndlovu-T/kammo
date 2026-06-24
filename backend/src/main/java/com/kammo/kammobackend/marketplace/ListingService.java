@@ -1,6 +1,7 @@
 package com.kammo.kammobackend.marketplace;
 
 import com.kammo.kammobackend.deal.CreateDealRequest;
+import com.kammo.kammobackend.deal.DealCancelledEvent;
 import com.kammo.kammobackend.deal.DealResponse;
 import com.kammo.kammobackend.deal.DealRole;
 import com.kammo.kammobackend.deal.DealService;
@@ -8,6 +9,7 @@ import com.kammo.kammobackend.deal.DeliveryMethod;
 import com.kammo.kammobackend.user.AppUser;
 import com.kammo.kammobackend.user.UserRepository;
 import java.util.List;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -102,14 +104,24 @@ public class ListingService {
             listing.getDescription(),
             seller.getPhoneNumber(),
             DeliveryMethod.MEETUP,
-            24
+            24,
+            null,
+            null
         );
-        DealResponse dealResponse = dealService.createDeal(user, request);
+        DealResponse dealResponse = dealService.createDealForListing(user, request, listing.getId());
 
         listing.setStatus(ListingStatus.SOLD);
         listingRepository.save(listing);
 
         return dealResponse;
+    }
+
+    @EventListener
+    @Transactional
+    public void onDealCancelled(DealCancelledEvent event) {
+        listingRepository.findById(event.listingId())
+            .filter(listing -> listing.getStatus() == ListingStatus.SOLD)
+            .ifPresent(listing -> listing.setStatus(ListingStatus.ACTIVE));
     }
 
     private Listing findListing(Long id) {

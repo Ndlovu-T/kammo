@@ -14,7 +14,7 @@ const QUICK = (max) => [
 ].filter((v, i, a) => a.indexOf(v) === i && v > 0);
 
 export default function WalletWithdrawScreen() {
-  const { wallet, withdrawFunds, busy, error } = useKammo();
+  const { wallet, bankAccount, withdrawFunds, busy, error } = useKammo();
   const [amount, setAmount] = useState("");
   const [chip, setChip] = useState("");
 
@@ -27,6 +27,7 @@ export default function WalletWithdrawScreen() {
 
   const available = wallet.available;
   const chips = QUICK(available);
+  const hasBankAccount = Boolean(bankAccount?.configured);
 
   return (
     <Screen bg="bg1">
@@ -70,17 +71,35 @@ export default function WalletWithdrawScreen() {
       </View>
 
       <Text style={styles.label}>WITHDRAW TO</Text>
-      <View style={styles.bank}>
-        <Text style={styles.bankTitle}>Capitec Bank</Text>
-        <Text style={styles.bankSub}>****4421 · Cheque account</Text>
-      </View>
+      <Pressable
+        style={[styles.bank, hasBankAccount && styles.bankSet]}
+        onPress={() => router.push("/wallet/bank-account")}
+      >
+        {hasBankAccount ? (
+          <>
+            <Text style={styles.bankTitle}>{bankAccount.bankAccountName}</Text>
+            <Text style={styles.bankSub}>
+              Bank code {bankAccount.bankCode} · {bankAccount.maskedAccountNumber}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.bankTitle}>No bank account linked</Text>
+            <Text style={styles.bankSub}>Tap to add one before withdrawing</Text>
+          </>
+        )}
+      </Pressable>
 
       <InfoBox title="Instant via PayShap">
         Withdrawals to PayShap-enabled accounts arrive in seconds. Standard EFT may take up to 2 hours.
       </InfoBox>
 
       <ErrorText>{error}</ErrorText>
-      <Button title="Withdraw funds" onPress={onWithdraw} loading={busy} />
+      {hasBankAccount ? (
+        <Button title="Withdraw funds" onPress={onWithdraw} loading={busy} />
+      ) : (
+        <Button title="Add bank account" onPress={() => router.push("/wallet/bank-account")} />
+      )}
     </Screen>
   );
 }
@@ -142,12 +161,16 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   bank: {
-    backgroundColor: colors.greenDim,
+    backgroundColor: colors.ink3,
     borderWidth: 1.5,
-    borderColor: colors.green,
+    borderColor: colors.line2,
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
+  },
+  bankSet: {
+    backgroundColor: colors.greenDim,
+    borderColor: colors.green,
   },
   bankTitle: { fontSize: 13.5, fontWeight: "700", color: colors.text },
   bankSub: { fontSize: 11, color: colors.mid, marginTop: 2 },

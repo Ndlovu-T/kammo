@@ -111,7 +111,7 @@ class ListingServiceTest {
 
         assertThatThrownBy(() -> listingService.buyListing(seller, 100L))
             .isInstanceOf(IllegalArgumentException.class);
-        verify(dealService, never()).createDeal(any(), any());
+        verify(dealService, never()).createDealForListing(any(), any(), any());
     }
 
     @Test
@@ -122,7 +122,7 @@ class ListingServiceTest {
 
         assertThatThrownBy(() -> listingService.buyListing(buyer, 100L))
             .isInstanceOf(IllegalArgumentException.class);
-        verify(dealService, never()).createDeal(any(), any());
+        verify(dealService, never()).createDealForListing(any(), any(), any());
     }
 
     @Test
@@ -134,15 +134,37 @@ class ListingServiceTest {
             "DEAL0001", "KM-DEAL0001", "https://kammo.co.za/deal/DEAL0001",
             DealRole.BUYER, listing.getItemName(), listing.getPrice(), BigDecimal.ZERO, BigDecimal.ZERO, listing.getPrice(),
             listing.getDescription(), seller.getPhoneNumber(), "next buyer action", "next seller action",
-            DeliveryMethod.MEETUP, 24, DealStatus.CREATED, null, Instant.now(), Instant.now()
+            DeliveryMethod.MEETUP, 24, DealStatus.CREATED, null, null, null, Instant.now(), Instant.now(), null
         );
-        when(dealService.createDeal(eq(buyer), any(CreateDealRequest.class))).thenReturn(dealResponse);
+        when(dealService.createDealForListing(eq(buyer), any(CreateDealRequest.class), eq(100L))).thenReturn(dealResponse);
 
         DealResponse response = listingService.buyListing(buyer, 100L);
 
         assertThat(response).isEqualTo(dealResponse);
         assertThat(listing.getStatus()).isEqualTo(ListingStatus.SOLD);
         verify(listingRepository).save(listing);
+    }
+
+    @Test
+    void onDealCancelled_relistsSoldListing() {
+        Listing listing = activeListing();
+        listing.setStatus(ListingStatus.SOLD);
+        when(listingRepository.findById(100L)).thenReturn(Optional.of(listing));
+
+        listingService.onDealCancelled(new com.kammo.kammobackend.deal.DealCancelledEvent(100L));
+
+        assertThat(listing.getStatus()).isEqualTo(ListingStatus.ACTIVE);
+    }
+
+    @Test
+    void onDealCancelled_doesNotRelistNonSoldListing() {
+        Listing listing = activeListing();
+        listing.setStatus(ListingStatus.REMOVED);
+        when(listingRepository.findById(100L)).thenReturn(Optional.of(listing));
+
+        listingService.onDealCancelled(new com.kammo.kammobackend.deal.DealCancelledEvent(100L));
+
+        assertThat(listing.getStatus()).isEqualTo(ListingStatus.REMOVED);
     }
 
     @Test

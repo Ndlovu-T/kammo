@@ -1,9 +1,8 @@
 package com.kammo.kammobackend.payment;
 
 import com.kammo.kammobackend.deal.Deal;
-import com.kammo.kammobackend.deal.DeliveryMethod;
+import com.kammo.kammobackend.deal.DealPricing;
 import com.kammo.kammobackend.user.AppUser;
-import java.math.BigDecimal;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -11,10 +10,12 @@ public class PaymentService {
 
     private final PaymentProvider paymentProvider;
     private final PaymentRepository paymentRepository;
+    private final String providerName;
 
     public PaymentService(PaymentProvider paymentProvider, PaymentRepository paymentRepository) {
         this.paymentProvider = paymentProvider;
         this.paymentRepository = paymentRepository;
+        this.providerName = paymentProvider.getClass().getSimpleName();
     }
 
     public PaymentResult charge(Deal deal, AppUser payer) {
@@ -22,10 +23,23 @@ public class PaymentService {
         paymentRepository.save(new PaymentRecord(
             deal.getId(),
             PaymentRecordType.CHARGE,
-            "mock",
+            providerName,
             result.providerReference(),
             result.status(),
-            totalToPay(deal)
+            DealPricing.totalToPay(deal)
+        ));
+        return result;
+    }
+
+    public PaymentResult verifyCharge(Deal deal, String providerReference) {
+        PaymentResult result = paymentProvider.verifyCharge(providerReference);
+        paymentRepository.save(new PaymentRecord(
+            deal.getId(),
+            PaymentRecordType.CHARGE,
+            providerName,
+            result.providerReference(),
+            result.status(),
+            DealPricing.totalToPay(deal)
         ));
         return result;
     }
@@ -35,7 +49,7 @@ public class PaymentService {
         paymentRepository.save(new PaymentRecord(
             deal.getId(),
             PaymentRecordType.PAYOUT,
-            "mock",
+            providerName,
             result.providerReference(),
             result.status(),
             deal.getPrice()
@@ -48,17 +62,11 @@ public class PaymentService {
         paymentRepository.save(new PaymentRecord(
             deal.getId(),
             PaymentRecordType.REFUND,
-            "mock",
+            providerName,
             result.providerReference(),
             result.status(),
-            totalToPay(deal)
+            DealPricing.totalToPay(deal)
         ));
         return result;
-    }
-
-    private BigDecimal totalToPay(Deal deal) {
-        BigDecimal kammoFee = deal.getPrice().multiply(new BigDecimal("0.01"));
-        BigDecimal courierFee = deal.getDeliveryMethod() == DeliveryMethod.COURIER ? new BigDecimal("120.00") : BigDecimal.ZERO;
-        return deal.getPrice().add(kammoFee).add(courierFee);
     }
 }

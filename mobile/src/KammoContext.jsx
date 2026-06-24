@@ -9,7 +9,13 @@ import {
 } from "react";
 import { kammoApi, mergeDeals } from "./api";
 import { validateCreateDraft } from "./dealActions";
-import { defaultCreateDraft, deliveryToApi, normalizePhone } from "./utils";
+import {
+  addressToPayload,
+  defaultCreateDraft,
+  deliveryToApi,
+  lockerToAddressPayload,
+  normalizePhone,
+} from "./utils";
 import {
   buildWalletSnapshot,
   loadWalletBalance,
@@ -28,6 +34,7 @@ export function KammoProvider({ children }) {
   const [auth, setAuth] = useState(null);
   const [profile, setProfile] = useState(null);
   const [dashboard, setDashboard] = useState(null);
+  const [bankAccount, setBankAccount] = useState(null);
   const [deals, setDeals] = useState([]);
   const [listings, setListings] = useState([]);
   const [selectedDeal, setSelectedDeal] = useState(null);
@@ -90,17 +97,19 @@ export function KammoProvider({ children }) {
       if (!activeToken) return;
       setSessionError("");
       try {
-        const [prof, dash, owned, asSeller, market] = await Promise.all([
+        const [prof, dash, owned, asSeller, market, bank] = await Promise.all([
           kammoApi.getProfile(activeToken),
           kammoApi.getDashboard(activeToken),
           kammoApi.getMyDeals(activeToken),
           kammoApi.getSellerDeals(activeToken),
           kammoApi.getListings(activeToken),
+          kammoApi.getBankAccount(activeToken),
         ]);
         setProfile(prof);
         setDashboard(dash);
         setDeals(mergeDeals(owned, asSeller));
         setListings(market);
+        setBankAccount(bank);
         setBackendOk(true);
       } catch (e) {
         setSessionError(e.message || "Failed to sync with backend");
@@ -152,6 +161,7 @@ export function KammoProvider({ children }) {
     setAuth(null);
     setProfile(null);
     setDashboard(null);
+    setBankAccount(null);
     setDeals([]);
     setListings([]);
     setSelectedDeal(null);
@@ -218,12 +228,22 @@ export function KammoProvider({ children }) {
     const validationError = validateCreateDraft(createDraft);
     if (validationError) throw new Error(validationError);
 
+    const isLocker = createDraft.delivery === "locker";
+    const collectionAddress = isLocker
+      ? lockerToAddressPayload(createDraft.collectionLocker)
+      : addressToPayload(createDraft.collectionAddress);
+    const deliveryAddress = isLocker
+      ? lockerToAddressPayload(createDraft.deliveryLocker)
+      : addressToPayload(createDraft.deliveryAddress);
+
     const payload = {
       itemName: createDraft.itemName.trim(),
       price: Number(createDraft.price),
       description: createDraft.description.trim(),
       deliveryMethod: deliveryToApi(createDraft.delivery),
       inspectionWindowHours: Number(createDraft.inspectionHours),
+      collectionAddress,
+      deliveryAddress,
     };
 
     return withBusy(async () => {
@@ -324,6 +344,7 @@ export function KammoProvider({ children }) {
       const n = Number(amount);
       if (!n || n < 1) throw new Error("Enter a valid amount");
       if (n > walletBalance) throw new Error("Insufficient wallet balance");
+      if (!bankAccount?.configured) throw new Error("Add a bank account before withdrawing");
       return withBusy(async () => {
         const next = walletBalance - n;
         await saveWalletBalance(next);
@@ -331,7 +352,23 @@ export function KammoProvider({ children }) {
         return next;
       });
     },
-    [walletBalance, withBusy]
+    [bankAccount, walletBalance, withBusy]
+  );
+
+  const saveBankAccount = useCallback(
+    async ({ bankCode, bankAccountNumber, bankAccountName }) => {
+      if (!token) throw new Error("Not signed in");
+      return withBusy(async () => {
+        const account = await kammoApi.updateBankAccount(token, {
+          bankCode: bankCode.trim(),
+          bankAccountNumber: bankAccountNumber.trim(),
+          bankAccountName: bankAccountName.trim(),
+        });
+        setBankAccount(account);
+        return account;
+      });
+    },
+    [token, withBusy]
   );
 
   return (
@@ -342,6 +379,7 @@ export function KammoProvider({ children }) {
         auth,
         profile,
         dashboard,
+        bankAccount,
         deals,
         listings,
         selectedDeal,
@@ -359,6 +397,7 @@ export function KammoProvider({ children }) {
         walletBalance,
         addFunds,
         withdrawFunds,
+        saveBankAccount,
         register,
         login,
         logout,

@@ -7,6 +7,8 @@ public interface PaymentProvider {
 
     PaymentResult charge(Deal deal, AppUser payer);
 
+    PaymentResult verifyCharge(String providerReference);
+
     PaymentResult payout(Deal deal);
 
     PaymentResult refund(Deal deal);

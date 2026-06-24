@@ -1,5 +1,6 @@
 package com.kammo.kammobackend.deal;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -27,6 +28,12 @@ public record SellerDealRequest(
     DeliveryMethod deliveryMethod,
 
     @NotNull
-    Integer inspectionWindowHours
+    Integer inspectionWindowHours,
+
+    @Valid
+    DealAddressRequest collectionAddress,
+
+    @Valid
+    DealAddressRequest deliveryAddress
 ) {
 }

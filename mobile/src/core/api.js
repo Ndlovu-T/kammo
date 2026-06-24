@@ -42,6 +42,9 @@ export function createKammoApi(apiBaseUrl) {
     register: (payload) => request("/api/auth/register", { method: "POST", body: payload }),
     login: (payload) => request("/api/auth/login", { method: "POST", body: payload }),
     getProfile: (token) => request("/api/me/profile", { token }),
+    getBankAccount: (token) => request("/api/me/bank-account", { token }),
+    updateBankAccount: (token, payload) =>
+      request("/api/me/bank-account", { method: "PUT", token, body: payload }),
     getDashboard: (token) => request("/api/dashboard", { token }),
     getMyDeals: (token, role) =>
       request(`/api/deals${role ? `?role=${encodeURIComponent(role)}` : ""}`, { token }),

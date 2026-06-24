@@ -5,11 +5,17 @@ import com.kammo.kammobackend.deal.DealRepository;
 import com.kammo.kammobackend.deal.DealResponse;
 import com.kammo.kammobackend.deal.DealStatus;
 import com.kammo.kammobackend.user.AppUser;
+import com.kammo.kammobackend.user.BankAccountRequest;
+import com.kammo.kammobackend.user.BankAccountResponse;
+import com.kammo.kammobackend.user.UserRepository;
+import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,9 +24,26 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProfileController {
 
     private final DealRepository dealRepository;
+    private final UserRepository userRepository;
 
-    public ProfileController(DealRepository dealRepository) {
+    public ProfileController(DealRepository dealRepository, UserRepository userRepository) {
         this.dealRepository = dealRepository;
+        this.userRepository = userRepository;
+    }
+
+    @GetMapping("/me/bank-account")
+    public BankAccountResponse getBankAccount(@AuthenticationPrincipal AppUser user) {
+        return BankAccountResponse.from(user);
+    }
+
+    @PutMapping("/me/bank-account")
+    public BankAccountResponse updateBankAccount(
+        @AuthenticationPrincipal AppUser user,
+        @Valid @RequestBody BankAccountRequest request
+    ) {
+        user.updateBankAccount(request.bankCode(), request.bankAccountNumber(), request.bankAccountName());
+        AppUser saved = userRepository.save(user);
+        return BankAccountResponse.from(saved);
     }
 
     @GetMapping("/me/profile")

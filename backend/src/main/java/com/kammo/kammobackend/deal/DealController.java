@@ -1,5 +1,6 @@
 package com.kammo.kammobackend.deal;
 
+import com.kammo.kammobackend.delivery.TrackingResult;
 import com.kammo.kammobackend.message.CreateMessageRequest;
 import com.kammo.kammobackend.rating.CreateRatingRequest;
 import com.kammo.kammobackend.user.AppUser;
@@ -69,6 +70,15 @@ public class DealController {
         return dealService.markPaymentSecured(user, dealCode);
     }
 
+    @PostMapping("/{dealCode}/payment/confirm")
+    public DealResponse confirmPayment(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode,
+        @Valid @RequestBody ConfirmPaymentRequest request
+    ) {
+        return dealService.confirmPayment(user, dealCode, request.reference());
+    }
+
     @PostMapping("/{dealCode}/seller/accept")
     public DealResponse acceptAsSeller(
         @AuthenticationPrincipal AppUser user,
@@ -102,6 +112,14 @@ public class DealController {
         return dealService.markInTransit(user, dealCode);
     }
 
+    @PostMapping("/{dealCode}/delivered")
+    public DealResponse markDelivered(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.markDelivered(user, dealCode);
+    }
+
     @PostMapping("/{dealCode}/confirm-delivery")
     public DealResponse confirmDelivery(
         @AuthenticationPrincipal AppUser user,
@@ -110,12 +128,28 @@ public class DealController {
         return dealService.confirmDelivery(user, dealCode);
     }
 
+    @PostMapping("/{dealCode}/cancel")
+    public DealResponse cancelDeal(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.cancelDeal(user, dealCode);
+    }
+
     @PostMapping("/{dealCode}/disputes")
     public DealResponse raiseDispute(
         @AuthenticationPrincipal AppUser user,
         @PathVariable String dealCode
     ) {
         return dealService.raiseDispute(user, dealCode);
+    }
+
+    @GetMapping("/{dealCode}/tracking")
+    public TrackingResult getTracking(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.getTracking(user, dealCode);
     }
 
     @GetMapping("/{dealCode}/messages")

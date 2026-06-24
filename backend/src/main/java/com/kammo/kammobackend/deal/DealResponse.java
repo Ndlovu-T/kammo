@@ -21,12 +21,19 @@ public record DealResponse(
     Integer inspectionWindowHours,
     DealStatus status,
     String waybillNumber,
+    DealAddressResponse collectionAddress,
+    DealAddressResponse deliveryAddress,
     Instant createdAt,
-    Instant updatedAt
+    Instant updatedAt,
+    String pendingPaymentUrl
 ) {
     public static DealResponse from(Deal deal) {
-        BigDecimal kammoFee = deal.getPrice().multiply(new BigDecimal("0.01"));
-        BigDecimal courierFee = deal.getDeliveryMethod() == DeliveryMethod.COURIER ? new BigDecimal("120.00") : BigDecimal.ZERO;
+        return from(deal, null);
+    }
+
+    public static DealResponse from(Deal deal, String pendingPaymentUrl) {
+        BigDecimal kammoFee = DealPricing.kammoFee(deal);
+        BigDecimal courierFee = DealPricing.courierFee(deal);
         return new DealResponse(
             deal.getDealCode(),
             "KM-" + deal.getDealCode(),
@@ -45,8 +52,11 @@ public record DealResponse(
             deal.getInspectionWindowHours(),
             deal.getStatus(),
             deal.getWaybillNumber(),
+            DealAddressResponse.from(deal.getCollectionAddress()),
+            DealAddressResponse.from(deal.getDeliveryAddress()),
             deal.getCreatedAt(),
-            deal.getUpdatedAt()
+            deal.getUpdatedAt(),
+            pendingPaymentUrl
         );
     }
 
@@ -59,6 +69,7 @@ public record DealResponse(
             case COMPLETED -> "Rate the seller.";
             case DISPUTED -> "Follow the dispute process.";
             case REFUNDED -> "You have been refunded.";
+            case CANCELLED -> "This deal was cancelled.";
         };
     }
 
@@ -74,6 +85,7 @@ public record DealResponse(
             case COMPLETED -> "Payout can be released.";
             case DISPUTED -> "Respond to the dispute.";
             case REFUNDED -> "The buyer was refunded. This deal is closed.";
+            case CANCELLED -> "This deal was cancelled.";
         };
     }
 }

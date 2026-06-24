@@ -8,6 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.kammo.kammobackend.delivery.DeliveryProvider;
+import com.kammo.kammobackend.delivery.ShipmentResult;
+import com.kammo.kammobackend.delivery.ShipmentStatus;
 import com.kammo.kammobackend.message.CreateMessageRequest;
 import com.kammo.kammobackend.message.DealMessage;
 import com.kammo.kammobackend.message.DealMessageRepository;
@@ -27,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +51,12 @@ class DealServiceTest {
     @Mock
     private PaymentService paymentService;
 
+    @Mock
+    private DeliveryProvider deliveryProvider;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private DealService dealService;
 
     private AppUser buyer;
@@ -55,7 +65,9 @@ class DealServiceTest {
 
     @BeforeEach
     void setUp() {
-        dealService = new DealService(dealRepository, dealCodeGenerator, messageRepository, ratingRepository, paymentService);
+        dealService = new DealService(
+            dealRepository, dealCodeGenerator, messageRepository, ratingRepository, paymentService, deliveryProvider, eventPublisher
+        );
 
         buyer = new AppUser("KM0001", "0710000001", "buyer@example.com", "hashed");
         ReflectionTestUtils.setField(buyer, "id", 1L);
@@ -77,11 +89,98 @@ class DealServiceTest {
             "A widget",
             seller.getPhoneNumber(),
             deliveryMethod,
-            24
+            24,
+            null,
+            null
         );
         ReflectionTestUtils.setField(deal, "id", 10L);
         deal.setStatus(status);
         return deal;
+    }
+
+    private CreateDealRequest createRequest(DeliveryMethod method, DealAddressRequest collection, DealAddressRequest delivery) {
+        return new CreateDealRequest(
+            DealRole.BUYER,
+            "Widget",
+            new BigDecimal("100.00"),
+            "A widget",
+            seller.getPhoneNumber(),
+            method,
+            24,
+            collection,
+            delivery
+        );
+    }
+
+    private DealAddressRequest fullStreetAddress() {
+        return new DealAddressRequest(
+            "12 Main Road", null, "Cape Town", "Western Cape", "8001",
+            null, null, "Jane Doe", "0710000009", null, null
+        );
+    }
+
+    private DealAddressRequest lockerAddress() {
+        return new DealAddressRequest(
+            null, null, null, null, null,
+            null, null, null, null, null, "CPT001"
+        );
+    }
+
+    @Test
+    void createDeal_meetupDoesNotRequireAddress() {
+        when(dealCodeGenerator.generateUniqueDealCode()).thenReturn("DEAL0002");
+        when(dealRepository.save(any(Deal.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        DealResponse response = dealService.createDeal(buyer, createRequest(DeliveryMethod.MEETUP, null, null));
+
+        assertThat(response.dealCode()).isEqualTo("DEAL0002");
+        assertThat(response.collectionAddress()).isNull();
+    }
+
+    @Test
+    void createDeal_courierWithoutAnyAddressThrows() {
+        assertThatThrownBy(() -> dealService.createDeal(buyer, createRequest(DeliveryMethod.COURIER, null, null)))
+            .isInstanceOf(IllegalArgumentException.class);
+        verify(dealRepository, never()).save(any());
+    }
+
+    @Test
+    void createDeal_courierWithIncompleteStreetAddressThrows() {
+        DealAddressRequest incomplete = new DealAddressRequest(
+            "12 Main Road", null, "Cape Town", null, null,
+            null, null, "Jane Doe", "0710000009", null, null
+        );
+
+        assertThatThrownBy(() -> dealService.createDeal(buyer, createRequest(DeliveryMethod.COURIER, incomplete, incomplete)))
+            .isInstanceOf(IllegalArgumentException.class);
+        verify(dealRepository, never()).save(any());
+    }
+
+    @Test
+    void createDeal_courierWithFullStreetAddressSucceeds() {
+        when(dealCodeGenerator.generateUniqueDealCode()).thenReturn("DEAL0003");
+        when(dealRepository.save(any(Deal.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        DealResponse response = dealService.createDeal(
+            buyer,
+            createRequest(DeliveryMethod.COURIER, fullStreetAddress(), fullStreetAddress())
+        );
+
+        assertThat(response.collectionAddress()).isNotNull();
+        assertThat(response.collectionAddress().city()).isEqualTo("Cape Town");
+    }
+
+    @Test
+    void createDeal_pudoLockerWithTerminalIdOnlySucceeds() {
+        when(dealCodeGenerator.generateUniqueDealCode()).thenReturn("DEAL0004");
+        when(dealRepository.save(any(Deal.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        DealResponse response = dealService.createDeal(
+            buyer,
+            createRequest(DeliveryMethod.PUDO_LOCKER, lockerAddress(), lockerAddress())
+        );
+
+        assertThat(response.deliveryAddress().lockerTerminalId()).isEqualTo("CPT001");
     }
 
     private void mockFindDeal(Deal deal) {
@@ -155,6 +254,88 @@ class DealServiceTest {
     }
 
     @Test
+    void markPaymentSecured_returnsCheckoutUrlAndLeavesDealAwaitingWhenPaymentPending() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        when(paymentService.charge(deal, buyer))
+            .thenReturn(new PaymentResult(PaymentStatus.PENDING, "ref-1", "Redirect to checkout", "https://checkout.paystack.com/abc123"));
+
+        DealResponse response = dealService.markPaymentSecured(buyer, deal.getDealCode());
+
+        assertThat(response.pendingPaymentUrl()).isEqualTo("https://checkout.paystack.com/abc123");
+        assertThat(response.status()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
+        assertThat(deal.getStatus()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
+    }
+
+    @Test
+    void confirmPayment_rejectsNonBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.confirmPayment(stranger, deal.getDealCode(), "ref-1"))
+            .isInstanceOf(IllegalArgumentException.class);
+        verify(paymentService, never()).verifyCharge(any(), any());
+    }
+
+    @Test
+    void confirmPayment_securesPaymentWhenVerificationSucceeds() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        when(paymentService.verifyCharge(deal, "ref-1"))
+            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+
+        DealResponse response = dealService.confirmPayment(buyer, deal.getDealCode(), "ref-1");
+
+        assertThat(response.status()).isEqualTo(DealStatus.PAYMENT_SECURED);
+    }
+
+    @Test
+    void confirmPayment_throwsWhenVerificationFails() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        when(paymentService.verifyCharge(deal, "ref-1"))
+            .thenReturn(new PaymentResult(PaymentStatus.FAILED, "ref-1", "declined"));
+
+        assertThatThrownBy(() -> dealService.confirmPayment(buyer, deal.getDealCode(), "ref-1"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(deal.getStatus()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
+    }
+
+    @Test
+    void markReadyForCollection_rejectsWrongStartingStatus() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.markReadyForCollection(seller, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void markReadyForCollection_createsShipmentForCourierDeliveries() {
+        Deal deal = buyerCreatedDeal(DealStatus.PAYMENT_SECURED, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+        when(deliveryProvider.createShipment(deal))
+            .thenReturn(new ShipmentResult(ShipmentStatus.SUCCEEDED, "PD-WAYBILL-2", "https://tracking.pudo.co.za/PD-WAYBILL-2", "ok"));
+
+        DealResponse response = dealService.markReadyForCollection(seller, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.AWAITING_COLLECTION);
+        assertThat(deal.getWaybillNumber()).isEqualTo("PD-WAYBILL-2");
+    }
+
+    @Test
+    void markReadyForCollection_skipsShipmentCreationForMeetup() {
+        Deal deal = buyerCreatedDeal(DealStatus.PAYMENT_SECURED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.markReadyForCollection(seller, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.AWAITING_COLLECTION);
+        assertThat(deal.getWaybillNumber()).isNull();
+        verify(deliveryProvider, never()).createShipment(any());
+    }
+
+    @Test
     void markInTransit_rejectsNonSeller() {
         Deal deal = buyerCreatedDeal(DealStatus.AWAITING_COLLECTION, DeliveryMethod.COURIER);
         mockFindDeal(deal);
@@ -176,10 +357,54 @@ class DealServiceTest {
     void markInTransit_transitionsOnSuccess() {
         Deal deal = buyerCreatedDeal(DealStatus.AWAITING_COLLECTION, DeliveryMethod.COURIER);
         mockFindDeal(deal);
+        when(deliveryProvider.createShipment(deal))
+            .thenReturn(new ShipmentResult(ShipmentStatus.SUCCEEDED, "PD-WAYBILL-1", "https://tracking.pudo.co.za/PD-WAYBILL-1", "ok"));
 
         DealResponse response = dealService.markInTransit(seller, deal.getDealCode());
 
         assertThat(response.status()).isEqualTo(DealStatus.IN_TRANSIT);
+        assertThat(deal.getWaybillNumber()).isEqualTo("PD-WAYBILL-1");
+    }
+
+    @Test
+    void markInTransit_throwsWhenShipmentCreationFails() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_COLLECTION, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+        when(deliveryProvider.createShipment(deal))
+            .thenReturn(new ShipmentResult(ShipmentStatus.FAILED, null, null, "PUDO is unavailable"));
+
+        assertThatThrownBy(() -> dealService.markInTransit(seller, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(deal.getStatus()).isEqualTo(DealStatus.IN_TRANSIT);
+    }
+
+    @Test
+    void markDelivered_rejectsNonBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.IN_TRANSIT, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.markDelivered(stranger, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void markDelivered_rejectsWrongStartingStatus() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_COLLECTION, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.markDelivered(buyer, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void markDelivered_transitionsAndStampsDeliveredAt() {
+        Deal deal = buyerCreatedDeal(DealStatus.IN_TRANSIT, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.markDelivered(buyer, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.DELIVERED);
+        assertThat(deal.getDeliveredAt()).isNotNull();
     }
 
     @Test
@@ -211,6 +436,79 @@ class DealServiceTest {
 
         verify(paymentService).payout(deal);
         assertThat(response.status()).isEqualTo(DealStatus.COMPLETED);
+    }
+
+    @Test
+    void confirmDelivery_succeedsFromDeliveredStatus() {
+        Deal deal = buyerCreatedDeal(DealStatus.DELIVERED, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.confirmDelivery(buyer, deal.getDealCode());
+
+        verify(paymentService).payout(deal);
+        assertThat(response.status()).isEqualTo(DealStatus.COMPLETED);
+    }
+
+    @Test
+    void cancelDeal_rejectsNonParticipant() {
+        Deal deal = buyerCreatedDeal(DealStatus.CREATED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.cancelDeal(stranger, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void cancelDeal_rejectsOncePaymentSecured() {
+        Deal deal = buyerCreatedDeal(DealStatus.PAYMENT_SECURED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.cancelDeal(buyer, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void cancelDeal_succeedsAndPublishesEventWhenLinkedToListing() {
+        Deal deal = buyerCreatedDeal(DealStatus.CREATED, DeliveryMethod.MEETUP);
+        deal.setListingId(55L);
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.cancelDeal(buyer, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.CANCELLED);
+        verify(eventPublisher).publishEvent(new DealCancelledEvent(55L));
+    }
+
+    @Test
+    void cancelDeal_succeedsWithoutEventWhenNotLinkedToListing() {
+        Deal deal = buyerCreatedDeal(DealStatus.CREATED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.cancelDeal(seller, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.CANCELLED);
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void raiseDispute_rejectsAfterInspectionWindowExpired() {
+        Deal deal = buyerCreatedDeal(DealStatus.DELIVERED, DeliveryMethod.COURIER);
+        deal.setDeliveredAt(java.time.Instant.now().minus(48, java.time.temporal.ChronoUnit.HOURS));
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.raiseDispute(buyer, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void raiseDispute_succeedsWithinInspectionWindow() {
+        Deal deal = buyerCreatedDeal(DealStatus.DELIVERED, DeliveryMethod.COURIER);
+        deal.setDeliveredAt(java.time.Instant.now().minus(1, java.time.temporal.ChronoUnit.HOURS));
+        mockFindDeal(deal);
+
+        DealResponse response = dealService.raiseDispute(buyer, deal.getDealCode());
+
+        assertThat(response.status()).isEqualTo(DealStatus.DISPUTED);
     }
 
     @Test
@@ -248,6 +546,40 @@ class DealServiceTest {
         DealResponse response = dealService.raiseDispute(seller, deal.getDealCode());
 
         assertThat(response.status()).isEqualTo(DealStatus.DISPUTED);
+    }
+
+    @Test
+    void getTracking_rejectsNonParticipant() {
+        Deal deal = buyerCreatedDeal(DealStatus.IN_TRANSIT, DeliveryMethod.COURIER);
+        deal.setWaybillNumber("PD-WAYBILL-3");
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.getTracking(stranger, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void getTracking_rejectsWhenNoShipmentExistsYet() {
+        Deal deal = buyerCreatedDeal(DealStatus.PAYMENT_SECURED, DeliveryMethod.COURIER);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.getTracking(buyer, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void getTracking_returnsResultForParticipant() {
+        Deal deal = buyerCreatedDeal(DealStatus.IN_TRANSIT, DeliveryMethod.COURIER);
+        deal.setWaybillNumber("PD-WAYBILL-3");
+        mockFindDeal(deal);
+        com.kammo.kammobackend.delivery.TrackingResult trackingResult = new com.kammo.kammobackend.delivery.TrackingResult(
+            "PD-WAYBILL-3", com.kammo.kammobackend.delivery.TrackingStatus.IN_TRANSIT, List.of()
+        );
+        when(deliveryProvider.trackShipment("PD-WAYBILL-3")).thenReturn(trackingResult);
+
+        com.kammo.kammobackend.delivery.TrackingResult result = dealService.getTracking(buyer, deal.getDealCode());
+
+        assertThat(result).isEqualTo(trackingResult);
     }
 
     @Test
