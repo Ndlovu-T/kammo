@@ -1,5 +1,8 @@
 package com.kammo.kammobackend.deal;
 
+import com.kammo.kammobackend.audit.DealAuditEventResponse;
+import com.kammo.kammobackend.audit.DealAuditEventType;
+import com.kammo.kammobackend.audit.DealAuditService;
 import com.kammo.kammobackend.delivery.DeliveryProvider;
 import com.kammo.kammobackend.delivery.ShipmentResult;
 import com.kammo.kammobackend.delivery.ShipmentStatus;
@@ -7,13 +10,16 @@ import com.kammo.kammobackend.delivery.TrackingResult;
 import com.kammo.kammobackend.message.CreateMessageRequest;
 import com.kammo.kammobackend.message.DealMessage;
 import com.kammo.kammobackend.message.DealMessageRepository;
+import com.kammo.kammobackend.payment.PaymentRecordType;
 import com.kammo.kammobackend.payment.PaymentResult;
 import com.kammo.kammobackend.payment.PaymentService;
 import com.kammo.kammobackend.payment.PaymentStatus;
+import com.kammo.kammobackend.payment.PaymentVerificationService;
 import com.kammo.kammobackend.rating.CreateRatingRequest;
 import com.kammo.kammobackend.rating.DealRating;
 import com.kammo.kammobackend.rating.DealRatingRepository;
 import com.kammo.kammobackend.user.AppUser;
+import com.kammo.kammobackend.wallet.WalletService;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
@@ -39,8 +45,11 @@ public class DealService {
     private final DealMessageRepository messageRepository;
     private final DealRatingRepository ratingRepository;
     private final PaymentService paymentService;
+    private final PaymentVerificationService paymentVerificationService;
     private final DeliveryProvider deliveryProvider;
     private final ApplicationEventPublisher eventPublisher;
+    private final DealAuditService auditService;
+    private final WalletService walletService;
 
     public DealService(
         DealRepository dealRepository,
@@ -48,16 +57,37 @@ public class DealService {
         DealMessageRepository messageRepository,
         DealRatingRepository ratingRepository,
         PaymentService paymentService,
+        PaymentVerificationService paymentVerificationService,
         DeliveryProvider deliveryProvider,
-        ApplicationEventPublisher eventPublisher
+        ApplicationEventPublisher eventPublisher,
+        DealAuditService auditService,
+        WalletService walletService
     ) {
         this.dealRepository = dealRepository;
         this.dealCodeGenerator = dealCodeGenerator;
         this.messageRepository = messageRepository;
         this.ratingRepository = ratingRepository;
         this.paymentService = paymentService;
+        this.paymentVerificationService = paymentVerificationService;
         this.deliveryProvider = deliveryProvider;
         this.eventPublisher = eventPublisher;
+        this.auditService = auditService;
+        this.walletService = walletService;
+    }
+
+    private void transitionTo(Deal deal, DealStatus newStatus) {
+        DealStatus from = deal.getStatus();
+        deal.setStatus(newStatus);
+        eventPublisher.publishEvent(new DealStatusChangedEvent(
+            deal.getId(),
+            deal.getDealCode(),
+            deal.getItemName(),
+            deal.getOwnerUserId(),
+            deal.getOwnerRole(),
+            deal.getOtherPartyPhoneNumber(),
+            from,
+            newStatus
+        ));
     }
 
     @Transactional
@@ -187,6 +217,26 @@ public class DealService {
     }
 
     @Transactional
+    public Map<String, Object> requestPaymentOtp(AppUser user, String dealCode) {
+        Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        requireAwaitingPayment(deal);
+
+        paymentVerificationService.requestOtp(deal, user);
+        return Map.of("otpSent", true);
+    }
+
+    @Transactional
+    public Map<String, Object> verifyPaymentOtp(AppUser user, String dealCode, String code) {
+        Deal deal = findDeal(dealCode);
+        requireBuyerAccess(user, deal);
+        requireAwaitingPayment(deal);
+
+        paymentVerificationService.verifyOtp(deal, user, code);
+        return Map.of("verified", true);
+    }
+
+    @Transactional
     public DealResponse markPaymentSecured(AppUser user, String dealCode) {
         Deal deal = findDeal(dealCode);
         requireBuyerAccess(user, deal);
@@ -200,8 +250,12 @@ public class DealService {
             return DealResponse.from(deal, result.checkoutUrl());
         }
 
-        deal.setStatus(DealStatus.PAYMENT_SECURED);
+        transitionTo(deal, DealStatus.PAYMENT_SECURED);
         assignWaybillIfNeeded(deal);
+        Long chargeRecordId = paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.CHARGE);
+        walletService.hold(deal, deal.getPrice(), chargeRecordId);
+        walletService.lockBuyerFunds(deal, deal.getPrice(), chargeRecordId);
+        publishPaymentConfirmed(deal);
         return DealResponse.from(deal);
     }
 
@@ -216,9 +270,26 @@ public class DealService {
             throw new IllegalArgumentException("Payment could not be confirmed: " + result.message());
         }
 
-        deal.setStatus(DealStatus.PAYMENT_SECURED);
+        transitionTo(deal, DealStatus.PAYMENT_SECURED);
         assignWaybillIfNeeded(deal);
+        Long chargeRecordId = paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.CHARGE);
+        walletService.hold(deal, deal.getPrice(), chargeRecordId);
+        walletService.lockBuyerFunds(deal, deal.getPrice(), chargeRecordId);
+        publishPaymentConfirmed(deal);
         return DealResponse.from(deal);
+    }
+
+    private void publishPaymentConfirmed(Deal deal) {
+        eventPublisher.publishEvent(new DealPaymentConfirmedEvent(
+            deal.getId(),
+            deal.getDealCode(),
+            deal.getItemName(),
+            deal.getPrice(),
+            deal.getInspectionWindowHours(),
+            deal.getOwnerUserId(),
+            deal.getOwnerRole(),
+            deal.getOtherPartyPhoneNumber()
+        ));
     }
 
     private void requireAwaitingPayment(Deal deal) {
@@ -237,7 +308,7 @@ public class DealService {
             throw new IllegalArgumentException("Only newly created buyer deals can be accepted by the seller");
         }
 
-        deal.setStatus(DealStatus.SELLER_ACCEPTED);
+        transitionTo(deal, DealStatus.SELLER_ACCEPTED);
         return DealResponse.from(deal);
     }
 
@@ -257,7 +328,7 @@ public class DealService {
             throw new IllegalArgumentException("Deal reference does not match the deal code");
         }
 
-        deal.setStatus(DealStatus.BUYER_ACCEPTED);
+        transitionTo(deal, DealStatus.BUYER_ACCEPTED);
         return DealResponse.from(deal);
     }
 
@@ -269,7 +340,7 @@ public class DealService {
             throw new IllegalArgumentException("Payment must be secured before the seller can prepare collection");
         }
 
-        deal.setStatus(DealStatus.AWAITING_COLLECTION);
+        transitionTo(deal, DealStatus.AWAITING_COLLECTION);
         assignWaybillIfNeeded(deal);
         return DealResponse.from(deal);
     }
@@ -282,7 +353,7 @@ public class DealService {
             throw new IllegalArgumentException("This deal is not awaiting collection");
         }
 
-        deal.setStatus(DealStatus.IN_TRANSIT);
+        transitionTo(deal, DealStatus.IN_TRANSIT);
         assignWaybillIfNeeded(deal);
         return DealResponse.from(deal);
     }
@@ -295,7 +366,7 @@ public class DealService {
             throw new IllegalArgumentException("This deal is not in transit");
         }
 
-        deal.setStatus(DealStatus.DELIVERED);
+        transitionTo(deal, DealStatus.DELIVERED);
         deal.setDeliveredAt(Instant.now());
         return DealResponse.from(deal);
     }
@@ -310,8 +381,13 @@ public class DealService {
             throw new IllegalArgumentException("This deal is not in transit, delivered or awaiting collection");
         }
 
-        deal.setStatus(DealStatus.COMPLETED);
+        transitionTo(deal, DealStatus.COMPLETED);
+        Long chargeRecordId = paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.CHARGE);
+        walletService.release(deal, deal.getPrice(), chargeRecordId);
+        walletService.unlockBuyerFunds(deal, deal.getPrice(), chargeRecordId,
+            "Buyer confirmed receipt for deal " + deal.getDealCode() + ", escrow released to seller");
         paymentService.payout(deal);
+        walletService.recordPayout(deal, deal.getPrice(), paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.PAYOUT));
         return DealResponse.from(deal);
     }
 
@@ -323,7 +399,7 @@ public class DealService {
             throw new IllegalArgumentException("This deal can no longer be cancelled");
         }
 
-        deal.setStatus(DealStatus.CANCELLED);
+        transitionTo(deal, DealStatus.CANCELLED);
         if (deal.getListingId() != null) {
             eventPublisher.publishEvent(new DealCancelledEvent(deal.getListingId()));
         }
@@ -347,7 +423,7 @@ public class DealService {
             }
         }
 
-        deal.setStatus(DealStatus.DISPUTED);
+        transitionTo(deal, DealStatus.DISPUTED);
         return DealResponse.from(deal);
     }
 
@@ -355,6 +431,11 @@ public class DealService {
         return dealRepository.findByStatusOrderByCreatedAtDesc(DealStatus.DISPUTED).stream()
             .map(DealResponse::from)
             .toList();
+    }
+
+    public List<DealAuditEventResponse> getAuditTrail(String dealCode) {
+        Deal deal = findDeal(dealCode);
+        return auditService.getAuditTrail(deal.getId());
     }
 
     @Transactional
@@ -365,11 +446,20 @@ public class DealService {
         }
 
         if (resolution == DisputeResolution.RELEASE_SELLER) {
+            Long chargeRecordId = paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.CHARGE);
+            walletService.release(deal, deal.getPrice(), chargeRecordId);
+            walletService.unlockBuyerFunds(deal, deal.getPrice(), chargeRecordId,
+                "Dispute resolved in seller's favor for deal " + deal.getDealCode() + ", escrow released to seller");
             paymentService.payout(deal);
-            deal.setStatus(DealStatus.COMPLETED);
+            walletService.recordPayout(deal, deal.getPrice(), paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.PAYOUT));
+            transitionTo(deal, DealStatus.COMPLETED);
         } else if (resolution == DisputeResolution.REFUND_BUYER) {
             paymentService.refund(deal);
-            deal.setStatus(DealStatus.REFUNDED);
+            Long refundRecordId = paymentService.latestSuccessfulRecordId(deal.getId(), PaymentRecordType.REFUND);
+            walletService.reverse(deal, deal.getPrice(), refundRecordId);
+            walletService.unlockBuyerFunds(deal, deal.getPrice(), refundRecordId,
+                "Dispute resolved in buyer's favor for deal " + deal.getDealCode() + ", funds refunded");
+            transitionTo(deal, DealStatus.REFUNDED);
         }
 
         return DealResponse.from(deal);
@@ -402,6 +492,13 @@ public class DealService {
         Deal deal = findDeal(dealCode);
         requireParticipant(user, deal);
         DealMessage message = messageRepository.save(new DealMessage(deal.getId(), user.getId(), request.body()));
+        auditService.record(
+            deal.getId(),
+            DealAuditEventType.MESSAGE_SENT,
+            user.getId(),
+            "Message sent",
+            Map.of("messageId", message.getId())
+        );
         return Map.of(
             "id", message.getId(),
             "senderUserId", message.getSenderUserId(),

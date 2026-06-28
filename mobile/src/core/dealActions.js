@@ -29,14 +29,10 @@ export function getDealActions(deal, userPhone) {
     actions.push({ key: "acceptBuyer", title: "Accept Deal as Buyer", api: "acceptAsBuyer" });
   }
   if (
-    ["AWAITING_BUYER_PAYMENT", "BUYER_ACCEPTED", "SELLER_ACCEPTED", "CREATED"].includes(s)
+    role === "buyer" &&
+    ["AWAITING_BUYER_PAYMENT", "BUYER_ACCEPTED", "SELLER_ACCEPTED"].includes(s)
   ) {
-    actions.push({
-      key: "payment",
-      title: "Mark Payment Secured (test)",
-      api: "markPaymentSecured",
-      variant: "outline",
-    });
+    actions.push({ key: "pay", title: "Pay Securely", api: "pay" });
   }
   if (role === "seller" && s === "PAYMENT_SECURED") {
     actions.push({

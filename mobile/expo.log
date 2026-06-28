@@ -1,0 +1,26 @@
+Node.js (v20.17.0) is outdated and unsupported. Please update to a newer Node.js LTS version (required: >=20.19.4)
+Go to: https://nodejs.org/en/download
+
+env: load .env
+env: export EXPO_PUBLIC_API_BASE_URL
+Starting project at E:\CV\kammo\mobile
+(node:20388) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Starting Metro Bundler
+
+Waiting on http://localhost:8082
+An update for expo is available: 56.0.8 → ~56.0.12
+5 other packages may need updating. Run npx expo install --check for details.
+Logs for your project will appear below.
+ ERROR  Project is incompatible with this version of Expo Go
+
+This project requires a newer version of Expo Go.
+
+How to fix this error:
+Download the latest version of Expo Go from the Play Store.
+ ERROR  Project is incompatible with this version of Expo Go
+
+This project requires a newer version of Expo Go.
+
+How to fix this error:
+Download the latest version of Expo Go from the Play Store.

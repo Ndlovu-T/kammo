@@ -5,6 +5,7 @@ import { Lock, Shield, Truck } from "lucide-react-native";
 import DealTimeline from "../../src/components/DealTimeline";
 import StatusPill from "../../src/components/StatusPill";
 import { Button, Card, ErrorText, Field, Screen, Subtitle } from "../../src/components/ui";
+import { openCheckout, referenceFromCallbackUrl } from "../../src/checkout";
 import { getDealActions, userDealRole } from "../../src/dealActions";
 import { useKammo } from "../../src/KammoContext";
 import { formatRand, statusLabel } from "../../src/utils";
@@ -13,7 +14,6 @@ import { colors } from "../../src/theme";
 const API_FN = {
   acceptAsSeller: (api, t, code) => api.acceptAsSeller(t, code),
   acceptAsBuyer: (ctx) => ctx.acceptAsBuyer(),
-  markPaymentSecured: (api, t, code) => api.markPaymentSecured(t, code),
   markReadyForCollection: (api, t, code) => api.markReadyForCollection(t, code),
   markInTransit: (api, t, code) => api.markInTransit(t, code),
   confirmDelivery: (api, t, code) => api.confirmDelivery(t, code),
@@ -29,6 +29,7 @@ export default function DealScreen() {
     dealAction,
     acceptAsBuyer,
     kammoApi,
+    token,
     rateDeal,
     userPhone,
     busy,
@@ -36,6 +37,10 @@ export default function DealScreen() {
   } = ctx;
   const [rating, setRating] = useState("5");
   const [comment, setComment] = useState("");
+  const [otpStep, setOtpStep] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState("");
 
   useEffect(() => {
     if (code) selectDeal(String(code)).catch(() => {});
@@ -43,9 +48,47 @@ export default function DealScreen() {
 
   const deal = selectedDeal;
   const role = userDealRole(deal, userPhone);
-  const actions = getDealActions(deal, userPhone);
+  const actions = getDealActions(deal, userPhone).filter(
+    (a) => !(a.key === "pay" && otpStep)
+  );
+
+  async function startPayment() {
+    setPayError("");
+    setPayBusy(true);
+    try {
+      await kammoApi.requestPaymentOtp(token, deal.dealCode);
+      setOtpStep(true);
+    } catch (e) {
+      setPayError(e.message || "Failed to send OTP");
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  async function submitOtp() {
+    setPayError("");
+    setPayBusy(true);
+    try {
+      await kammoApi.verifyPaymentOtp(token, deal.dealCode, otpCode);
+      const updated = await dealAction((t, c) => kammoApi.markPaymentSecured(t, c));
+      if (updated.pendingPaymentUrl) {
+        const redirectUrl = await openCheckout(updated.pendingPaymentUrl, "kammo://deal/callback");
+        const reference = referenceFromCallbackUrl(redirectUrl);
+        await dealAction((t, c) => kammoApi.confirmPayment(t, c, reference));
+      }
+      setOtpStep(false);
+      setOtpCode("");
+    } catch (e) {
+      setPayError(e.message || "Payment failed");
+    } finally {
+      setPayBusy(false);
+    }
+  }
 
   async function runAction(action) {
+    if (action.api === "pay") {
+      return startPayment();
+    }
     try {
       if (action.api === "acceptAsBuyer") {
         await acceptAsBuyer();
@@ -113,7 +156,7 @@ export default function DealScreen() {
       ) : null}
 
       <Text style={styles.section}>Progress</Text>
-      <DealTimeline status={deal.status} />
+      <DealTimeline trackerStep={deal.trackerStep} />
 
       <Button
         title="Open Chat"
@@ -129,13 +172,38 @@ export default function DealScreen() {
               key={action.key}
               title={action.title}
               variant={action.variant || (action.key === "confirm" ? "green" : "outline")}
-              loading={busy}
+              loading={busy || payBusy}
               onPress={() => runAction(action)}
             />
           ))}
         </>
       ) : deal.status === "COMPLETED" ? (
         <Button title="Rate this deal" onPress={() => router.push("/confirmed")} />
+      ) : null}
+
+      {otpStep ? (
+        <>
+          <Text style={styles.section}>Enter the code we sent you</Text>
+          <Field
+            label="6-digit code"
+            value={otpCode}
+            onChangeText={setOtpCode}
+            keyboardType="numeric"
+            maxLength={6}
+            placeholder="000000"
+          />
+          <ErrorText>{payError}</ErrorText>
+          <Button title="Confirm & Pay" loading={payBusy || busy} onPress={submitOtp} />
+          <Button
+            title="Cancel"
+            variant="outline"
+            onPress={() => {
+              setOtpStep(false);
+              setOtpCode("");
+              setPayError("");
+            }}
+          />
+        </>
       ) : null}
 
       {deal.status === "COMPLETED" ? (

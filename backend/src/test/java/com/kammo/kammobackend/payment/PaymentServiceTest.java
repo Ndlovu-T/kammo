@@ -1,9 +1,13 @@
 package com.kammo.kammobackend.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.kammo.kammobackend.audit.DealAuditService;
 import com.kammo.kammobackend.deal.Deal;
 import com.kammo.kammobackend.deal.DealRole;
 import com.kammo.kammobackend.deal.DeliveryMethod;
@@ -27,6 +31,12 @@ class PaymentServiceTest {
     @Mock
     private PaymentRepository paymentRepository;
 
+    @Mock
+    private PaymentVerificationService paymentVerificationService;
+
+    @Mock
+    private DealAuditService auditService;
+
     @Captor
     private ArgumentCaptor<PaymentRecord> paymentRecordCaptor;
 
@@ -36,7 +46,7 @@ class PaymentServiceTest {
 
     @BeforeEach
     void setUp() {
-        paymentService = new PaymentService(paymentProvider, paymentRepository);
+        paymentService = new PaymentService(paymentProvider, paymentRepository, paymentVerificationService, auditService);
         buyer = new AppUser("KM0001", "0710000001", "buyer@example.com", "hashed");
         ReflectionTestUtils.setField(buyer, "id", 1L);
     }
@@ -60,21 +70,37 @@ class PaymentServiceTest {
     }
 
     @Test
-    void charge_persistsTotalToPayIncludingFeeAndCourierFee() {
+    void charge_failsWithoutVerifiedOtpAndNeverReachesProvider() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
+        when(paymentVerificationService.requireVerifiedReference(deal))
+            .thenThrow(new IllegalArgumentException("OTP verification is required before payment can proceed"));
+
+        assertThatThrownBy(() -> paymentService.charge(deal, buyer))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("OTP verification is required");
+        verify(paymentProvider, never()).charge(any(), any(), any());
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void charge_passesKammoIssuedReferenceToProviderAndPersistsTotalToPayIncludingFeeAndCourierFee() {
         Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.COURIER);
-        when(paymentProvider.charge(deal, buyer))
-            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+        when(paymentVerificationService.requireVerifiedReference(deal)).thenReturn("KAMMO-DEAL0001-abc.sig");
+        when(paymentProvider.charge(deal, buyer, "KAMMO-DEAL0001-abc.sig"))
+            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "KAMMO-DEAL0001-abc.sig", "ok"));
 
         paymentService.charge(deal, buyer);
 
+        verify(paymentProvider).charge(deal, buyer, "KAMMO-DEAL0001-abc.sig");
         verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("221.00"));
     }
 
     @Test
     void charge_persistsTotalToPayWithoutCourierFeeForMeetup() {
         Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
-        when(paymentProvider.charge(deal, buyer))
-            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
+        when(paymentVerificationService.requireVerifiedReference(deal)).thenReturn("KAMMO-DEAL0001-abc.sig");
+        when(paymentProvider.charge(deal, buyer, "KAMMO-DEAL0001-abc.sig"))
+            .thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "KAMMO-DEAL0001-abc.sig", "ok"));
 
         paymentService.charge(deal, buyer);
 
@@ -82,12 +108,28 @@ class PaymentServiceTest {
     }
 
     @Test
-    void verifyCharge_persistsResultAsChargeRecord() {
+    void verifyCharge_rejectsReferenceTamperingBeforeCallingProvider() {
+        Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
+        org.mockito.Mockito.doThrow(new IllegalArgumentException(
+                "Payment reference does not match the verified checkout session — possible tampering or replay"
+            ))
+            .when(paymentVerificationService).validateAndConsumeReference(deal, "forged-ref");
+
+        assertThatThrownBy(() -> paymentService.verifyCharge(deal, "forged-ref"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("tampering");
+        verify(paymentProvider, never()).verifyCharge(any());
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void verifyCharge_persistsResultAsChargeRecordOnceReferenceValidated() {
         Deal deal = dealWith(new BigDecimal("100.00"), DeliveryMethod.MEETUP);
         when(paymentProvider.verifyCharge("ref-1")).thenReturn(new PaymentResult(PaymentStatus.SUCCEEDED, "ref-1", "ok"));
 
         paymentService.verifyCharge(deal, "ref-1");
 
+        verify(paymentVerificationService).validateAndConsumeReference(deal, "ref-1");
         verifySavedRecordMatches(PaymentRecordType.CHARGE, new BigDecimal("101.00"));
     }
 

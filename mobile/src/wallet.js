@@ -5,13 +5,41 @@ const WALLET_KEY = "kammo_wallet_balance";
 
 export async function loadWalletBalance() {
   const raw = await AsyncStorage.getItem(WALLET_KEY);
-  if (raw == null) return 2450;
+  if (raw == null) return 0;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
 }
 
 export async function saveWalletBalance(amount) {
   await AsyncStorage.setItem(WALLET_KEY, String(Math.max(0, amount)));
+}
+
+const LEDGER_LABELS = {
+  HOLD: { title: "Funds locked", type: "lock" },
+  LOCK: { title: "Funds locked", type: "lock" },
+  RELEASE: { title: "Funds released", type: "credit" },
+  UNLOCK: { title: "Funds released", type: "credit" },
+  PAYOUT: { title: "Payout sent", type: "debit" },
+  REFUND: { title: "Refunded", type: "debit" },
+  REVERSAL: { title: "Refunded", type: "debit" },
+};
+
+export function buildTransactionsFromLedger(entries = []) {
+  return entries
+    .map((entry) => {
+      const label = LEDGER_LABELS[entry.type] || { title: entry.type, type: "debit" };
+      return {
+        id: entry.id,
+        type: label.type,
+        title: label.title,
+        sub: entry.reason,
+        amount: Math.abs(Number(entry.amount) || 0),
+        when: timeAgo(entry.createdAt),
+        sortAt: new Date(entry.createdAt).getTime(),
+      };
+    })
+    .sort((a, b) => b.sortAt - a.sortAt)
+    .slice(0, 12);
 }
 
 export function computeLocked(deals = [], dashboard) {
@@ -66,18 +94,19 @@ export function buildTransactions(deals = []) {
   return rows.sort((a, b) => b.sortAt - a.sortAt).slice(0, 12);
 }
 
-export function buildWalletSnapshot({ balance, profile, dashboard, deals }) {
+export function buildWalletSnapshot({ wallet, profile, dashboard, deals }) {
   const locked = computeLocked(deals, dashboard);
   const lifetime = Number(profile?.volume ?? 0);
   const activeCount = dashboard?.activeDealCount ?? deals.filter((d) => d.status !== "COMPLETED").length;
+  const ledgerEntries = wallet?.recentEntries ?? [];
 
   return {
-    available: balance,
+    available: Number(wallet?.balance ?? 0),
     locked,
     lifetime,
     activeCount,
     dealCount: profile?.dealCount ?? deals.length,
-    transactions: buildTransactions(deals),
+    transactions: ledgerEntries.length > 0 ? buildTransactionsFromLedger(ledgerEntries) : buildTransactions(deals),
   };
 }
 

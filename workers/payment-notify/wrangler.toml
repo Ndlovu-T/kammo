@@ -1,0 +1,11 @@
+name = "kammo-payment-notify"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+
+# Secrets (set with `wrangler secret put <NAME>`, never committed):
+#   WORKER_SHARED_SECRET  - must match app.worker.shared-secret on the backend
+#   RESEND_API_KEY        - transactional email API key
+#
+# Vars (non-secret, safe to keep here):
+[vars]
+NOTIFY_FROM_EMAIL = "notifications@kammo.co.za"

@@ -19,7 +19,6 @@ public class PaymentRecord {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
     private Long dealId;
 
     @Enumerated(EnumType.STRING)

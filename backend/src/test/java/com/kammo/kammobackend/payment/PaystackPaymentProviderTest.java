@@ -75,10 +75,11 @@ class PaystackPaymentProviderTest {
                 {"status": true, "data": {"authorization_url": "https://checkout.paystack.com/abc123", "reference": "ref-1"}}
                 """, MediaType.APPLICATION_JSON));
 
-        PaymentResult result = provider.charge(deal, buyer);
+        PaymentResult result = provider.charge(deal, buyer, "KAMMO-DEAL0001-abc.sig");
 
         assertThat(result.status()).isEqualTo(PaymentStatus.PENDING);
         assertThat(result.checkoutUrl()).isEqualTo("https://checkout.paystack.com/abc123");
+        assertThat(result.providerReference()).isEqualTo("KAMMO-DEAL0001-abc.sig");
         mockServer.verify();
     }
 
@@ -90,7 +91,7 @@ class PaystackPaymentProviderTest {
                 {"status": false, "data": null}
                 """, MediaType.APPLICATION_JSON));
 
-        PaymentResult result = provider.charge(deal, buyer);
+        PaymentResult result = provider.charge(deal, buyer, "KAMMO-DEAL0001-abc.sig");
 
         assertThat(result.status()).isEqualTo(PaymentStatus.FAILED);
     }

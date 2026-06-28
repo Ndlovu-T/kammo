@@ -31,7 +31,8 @@ export function createKammoApi(apiBaseUrl) {
     }
 
     if (!response.ok) {
-      throw new Error(data?.message || `Request failed (${response.status})`);
+      const detail = data?.errors && Object.values(data.errors)[0];
+      throw new Error(detail || data?.message || `Request failed (${response.status})`);
     }
 
     return data;
@@ -46,6 +47,11 @@ export function createKammoApi(apiBaseUrl) {
     updateBankAccount: (token, payload) =>
       request("/api/me/bank-account", { method: "PUT", token, body: payload }),
     getDashboard: (token) => request("/api/dashboard", { token }),
+    getWallet: (token) => request("/api/wallet/me", { token }),
+    initiateWalletTopup: (token, amount) =>
+      request("/api/wallet/topup", { method: "POST", token, body: { amount } }),
+    verifyWalletTopup: (token, reference) =>
+      request("/api/wallet/topup/verify", { method: "POST", token, body: { reference } }),
     getMyDeals: (token, role) =>
       request(`/api/deals${role ? `?role=${encodeURIComponent(role)}` : ""}`, { token }),
     getSellerDeals: (token) => request("/api/deals/seller", { token }),
@@ -53,8 +59,14 @@ export function createKammoApi(apiBaseUrl) {
     createSellerDeal: (token, payload) =>
       request("/api/deals/seller", { method: "POST", token, body: payload }),
     getDeal: (dealCode, token) => request(`/api/deals/${dealCode}`, { token }),
+    requestPaymentOtp: (token, dealCode) =>
+      request(`/api/deals/${dealCode}/payment/request-otp`, { method: "POST", token }),
+    verifyPaymentOtp: (token, dealCode, code) =>
+      request(`/api/deals/${dealCode}/payment/verify-otp`, { method: "POST", token, body: { code } }),
     markPaymentSecured: (token, dealCode) =>
       request(`/api/deals/${dealCode}/payment`, { method: "POST", token }),
+    confirmPayment: (token, dealCode, reference) =>
+      request(`/api/deals/${dealCode}/payment/confirm`, { method: "POST", token, body: { reference } }),
     acceptAsSeller: (token, dealCode) =>
       request(`/api/deals/${dealCode}/seller/accept`, { method: "POST", token }),
     acceptAsBuyer: (token, dealCode, dealReference) =>

@@ -134,7 +134,7 @@ class ListingServiceTest {
             "DEAL0001", "KM-DEAL0001", "https://kammo.co.za/deal/DEAL0001",
             DealRole.BUYER, listing.getItemName(), listing.getPrice(), BigDecimal.ZERO, BigDecimal.ZERO, listing.getPrice(),
             listing.getDescription(), seller.getPhoneNumber(), "next buyer action", "next seller action",
-            DeliveryMethod.MEETUP, 24, DealStatus.CREATED, null, null, null, Instant.now(), Instant.now(), null
+            DeliveryMethod.MEETUP, 24, DealStatus.CREATED, DealStatus.CREATED.toTrackerStep(), null, null, null, Instant.now(), Instant.now(), null
         );
         when(dealService.createDealForListing(eq(buyer), any(CreateDealRequest.class), eq(100L))).thenReturn(dealResponse);
 

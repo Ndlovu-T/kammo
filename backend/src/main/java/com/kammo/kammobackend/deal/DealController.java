@@ -62,6 +62,23 @@ public class DealController {
         return dealService.getDeal(dealCode);
     }
 
+    @PostMapping("/{dealCode}/payment/request-otp")
+    public Map<String, Object> requestPaymentOtp(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode
+    ) {
+        return dealService.requestPaymentOtp(user, dealCode);
+    }
+
+    @PostMapping("/{dealCode}/payment/verify-otp")
+    public Map<String, Object> verifyPaymentOtp(
+        @AuthenticationPrincipal AppUser user,
+        @PathVariable String dealCode,
+        @Valid @RequestBody VerifyPaymentOtpRequest request
+    ) {
+        return dealService.verifyPaymentOtp(user, dealCode, request.code());
+    }
+
     @PostMapping("/{dealCode}/payment")
     public DealResponse markPaymentSecured(
         @AuthenticationPrincipal AppUser user,

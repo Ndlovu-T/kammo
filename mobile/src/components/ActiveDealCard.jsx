@@ -6,23 +6,17 @@ import { colors } from "../theme";
 
 const STEPS = ["Created", "Paid", "Shipped", "Delivered", "Inspect"];
 
-function stepIndex(status) {
-  const map = {
-    CREATED: 0,
-    AWAITING_BUYER_PAYMENT: 1,
-    BUYER_ACCEPTED: 1,
-    SELLER_ACCEPTED: 1,
-    PAYMENT_SECURED: 2,
-    AWAITING_COLLECTION: 2,
-    IN_TRANSIT: 3,
-    DELIVERED: 4,
-    COMPLETED: 5,
-  };
-  return map[status] ?? 0;
+// Tracker step comes from the backend's DealStatus -> TrackerStep mapping
+// (see backend DealStatus.toTrackerStep()).
+const TRACKER_STEP_ORDER = ["INITIATED", "PAID", "TRANSIT", "INSPECT", "RELEASED"];
+
+function stepIndex(trackerStep) {
+  const idx = TRACKER_STEP_ORDER.indexOf(trackerStep);
+  return idx === -1 ? 0 : idx + 1;
 }
 
-function ProgressSteps({ status }) {
-  const current = stepIndex(status);
+function ProgressSteps({ trackerStep, status }) {
+  const current = stepIndex(trackerStep);
   const labels = status === "AWAITING_BUYER_PAYMENT" ? ["Created", "Pay", "Ship", "Transit", "Done"] : STEPS;
 
   return (
@@ -66,7 +60,7 @@ export default function ActiveDealCard({ deal, onPress, subtitle }) {
           <StatusPill status={deal.status} small />
         </View>
       </View>
-      <ProgressSteps status={deal.status} />
+      <ProgressSteps trackerStep={deal.trackerStep} status={deal.status} />
       {inspecting ? (
         <View style={styles.timer}>
           <Clock color={colors.amber} size={14} />

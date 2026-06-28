@@ -1,5 +1,6 @@
 package com.kammo.kammobackend.admin;
 
+import com.kammo.kammobackend.audit.DealAuditEventResponse;
 import com.kammo.kammobackend.deal.DealResponse;
 import com.kammo.kammobackend.deal.DealService;
 import jakarta.validation.Valid;
@@ -32,5 +33,10 @@ public class AdminController {
         @Valid @RequestBody ResolveDisputeRequest request
     ) {
         return dealService.resolveDispute(dealCode, request.resolution());
+    }
+
+    @GetMapping("/deals/{dealCode}/audit-trail")
+    public List<DealAuditEventResponse> getAuditTrail(@PathVariable String dealCode) {
+        return dealService.getAuditTrail(dealCode);
     }
 }

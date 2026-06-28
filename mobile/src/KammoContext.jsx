@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { kammoApi, mergeDeals } from "./api";
+import { openCheckout } from "./checkout";
 import { validateCreateDraft } from "./dealActions";
 import {
   addressToPayload,
@@ -46,6 +47,7 @@ export function KammoProvider({ children }) {
   const [busy, setBusy] = useState(false);
   const [createDraft, setCreateDraft] = useState(defaultDraft);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [backendWallet, setBackendWallet] = useState(null);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(STORAGE_KEY), loadWalletBalance()]).then(
@@ -97,19 +99,21 @@ export function KammoProvider({ children }) {
       if (!activeToken) return;
       setSessionError("");
       try {
-        const [prof, dash, owned, asSeller, market, bank] = await Promise.all([
+        const [prof, dash, owned, asSeller, market, bank, wallet] = await Promise.all([
           kammoApi.getProfile(activeToken),
           kammoApi.getDashboard(activeToken),
           kammoApi.getMyDeals(activeToken),
           kammoApi.getSellerDeals(activeToken),
           kammoApi.getListings(activeToken),
           kammoApi.getBankAccount(activeToken),
+          kammoApi.getWallet(activeToken),
         ]);
         setProfile(prof);
         setDashboard(dash);
         setDeals(mergeDeals(owned, asSeller));
         setListings(market);
         setBankAccount(bank);
+        setBackendWallet(wallet);
         setBackendOk(true);
       } catch (e) {
         setSessionError(e.message || "Failed to sync with backend");
@@ -162,6 +166,7 @@ export function KammoProvider({ children }) {
     setProfile(null);
     setDashboard(null);
     setBankAccount(null);
+    setBackendWallet(null);
     setDeals([]);
     setListings([]);
     setSelectedDeal(null);
@@ -224,29 +229,29 @@ export function KammoProvider({ children }) {
   }, [selectedDeal, token]);
 
   const submitCreateDeal = useCallback(async () => {
-    if (!token) throw new Error("Not signed in");
-    const validationError = validateCreateDraft(createDraft);
-    if (validationError) throw new Error(validationError);
-
-    const isLocker = createDraft.delivery === "locker";
-    const collectionAddress = isLocker
-      ? lockerToAddressPayload(createDraft.collectionLocker)
-      : addressToPayload(createDraft.collectionAddress);
-    const deliveryAddress = isLocker
-      ? lockerToAddressPayload(createDraft.deliveryLocker)
-      : addressToPayload(createDraft.deliveryAddress);
-
-    const payload = {
-      itemName: createDraft.itemName.trim(),
-      price: Number(createDraft.price),
-      description: createDraft.description.trim(),
-      deliveryMethod: deliveryToApi(createDraft.delivery),
-      inspectionWindowHours: Number(createDraft.inspectionHours),
-      collectionAddress,
-      deliveryAddress,
-    };
-
     return withBusy(async () => {
+      if (!token) throw new Error("Not signed in");
+      const validationError = validateCreateDraft(createDraft);
+      if (validationError) throw new Error(validationError);
+
+      const isLocker = createDraft.delivery === "locker";
+      const collectionAddress = isLocker
+        ? lockerToAddressPayload(createDraft.collectionLocker)
+        : addressToPayload(createDraft.collectionAddress);
+      const deliveryAddress = isLocker
+        ? lockerToAddressPayload(createDraft.deliveryLocker)
+        : addressToPayload(createDraft.deliveryAddress);
+
+      const payload = {
+        itemName: createDraft.itemName.trim(),
+        price: Number(createDraft.price),
+        description: createDraft.description.trim(),
+        deliveryMethod: deliveryToApi(createDraft.delivery),
+        inspectionWindowHours: Number(createDraft.inspectionHours),
+        collectionAddress,
+        deliveryAddress,
+      };
+
       const deal =
         createDraft.role === "seller"
           ? await kammoApi.createSellerDeal(token, {
@@ -317,35 +322,41 @@ export function KammoProvider({ children }) {
   const wallet = useMemo(
     () =>
       buildWalletSnapshot({
-        balance: walletBalance,
+        wallet: backendWallet,
         profile,
         dashboard,
         deals,
       }),
-    [walletBalance, profile, dashboard, deals]
+    [backendWallet, profile, dashboard, deals]
   );
 
   const addFunds = useCallback(
     async (amount) => {
-      const n = Number(amount);
-      if (!n || n < 1) throw new Error("Enter a valid amount");
       return withBusy(async () => {
-        const next = walletBalance + n;
-        await saveWalletBalance(next);
-        setWalletBalance(next);
-        return next;
+        const n = Number(amount);
+        if (!n || n < 1) throw new Error("Enter a valid amount");
+        if (!token) throw new Error("Not signed in");
+
+        const { status, checkoutUrl, reference } = await kammoApi.initiateWalletTopup(token, n);
+        if (status === "PENDING" && checkoutUrl) {
+          await openCheckout(checkoutUrl, "kammo://wallet/callback");
+        }
+        const wallet = await kammoApi.verifyWalletTopup(token, reference);
+        setBackendWallet(wallet);
+        await refreshSession();
+        return wallet.balance;
       });
     },
-    [walletBalance, withBusy]
+    [refreshSession, token, withBusy]
   );
 
   const withdrawFunds = useCallback(
     async (amount) => {
-      const n = Number(amount);
-      if (!n || n < 1) throw new Error("Enter a valid amount");
-      if (n > walletBalance) throw new Error("Insufficient wallet balance");
-      if (!bankAccount?.configured) throw new Error("Add a bank account before withdrawing");
       return withBusy(async () => {
+        const n = Number(amount);
+        if (!n || n < 1) throw new Error("Enter a valid amount");
+        if (n > walletBalance) throw new Error("Insufficient wallet balance");
+        if (!bankAccount?.configured) throw new Error("Add a bank account before withdrawing");
         const next = walletBalance - n;
         await saveWalletBalance(next);
         setWalletBalance(next);

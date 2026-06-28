@@ -3,11 +3,13 @@ package com.kammo.kammobackend.deal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.kammo.kammobackend.audit.DealAuditService;
 import com.kammo.kammobackend.delivery.DeliveryProvider;
 import com.kammo.kammobackend.delivery.ShipmentResult;
 import com.kammo.kammobackend.delivery.ShipmentStatus;
@@ -17,10 +19,12 @@ import com.kammo.kammobackend.message.DealMessageRepository;
 import com.kammo.kammobackend.payment.PaymentResult;
 import com.kammo.kammobackend.payment.PaymentService;
 import com.kammo.kammobackend.payment.PaymentStatus;
+import com.kammo.kammobackend.payment.PaymentVerificationService;
 import com.kammo.kammobackend.rating.CreateRatingRequest;
 import com.kammo.kammobackend.rating.DealRating;
 import com.kammo.kammobackend.rating.DealRatingRepository;
 import com.kammo.kammobackend.user.AppUser;
+import com.kammo.kammobackend.wallet.WalletService;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -52,10 +56,19 @@ class DealServiceTest {
     private PaymentService paymentService;
 
     @Mock
+    private PaymentVerificationService paymentVerificationService;
+
+    @Mock
     private DeliveryProvider deliveryProvider;
 
     @Mock
     private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    private DealAuditService auditService;
+
+    @Mock
+    private WalletService walletService;
 
     private DealService dealService;
 
@@ -66,7 +79,8 @@ class DealServiceTest {
     @BeforeEach
     void setUp() {
         dealService = new DealService(
-            dealRepository, dealCodeGenerator, messageRepository, ratingRepository, paymentService, deliveryProvider, eventPublisher
+            dealRepository, dealCodeGenerator, messageRepository, ratingRepository, paymentService, paymentVerificationService,
+            deliveryProvider, eventPublisher, auditService, walletService
         );
 
         buyer = new AppUser("KM0001", "0710000001", "buyer@example.com", "hashed");
@@ -188,6 +202,59 @@ class DealServiceTest {
     }
 
     @Test
+    void requestPaymentOtp_rejectsNonBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.requestPaymentOtp(stranger, deal.getDealCode()))
+            .isInstanceOf(IllegalArgumentException.class);
+        verify(paymentVerificationService, never()).requestOtp(any(), any());
+    }
+
+    @Test
+    void requestPaymentOtp_sendsOtpForBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        Map<String, Object> response = dealService.requestPaymentOtp(buyer, deal.getDealCode());
+
+        verify(paymentVerificationService).requestOtp(deal, buyer);
+        assertThat(response).containsEntry("otpSent", true);
+    }
+
+    @Test
+    void verifyPaymentOtp_rejectsNonBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        assertThatThrownBy(() -> dealService.verifyPaymentOtp(stranger, deal.getDealCode(), "123456"))
+            .isInstanceOf(IllegalArgumentException.class);
+        verify(paymentVerificationService, never()).verifyOtp(any(), any(), any());
+    }
+
+    @Test
+    void verifyPaymentOtp_verifiesCodeForBuyer() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+
+        Map<String, Object> response = dealService.verifyPaymentOtp(buyer, deal.getDealCode(), "123456");
+
+        verify(paymentVerificationService).verifyOtp(deal, buyer, "123456");
+        assertThat(response).containsEntry("verified", true);
+    }
+
+    @Test
+    void verifyPaymentOtp_propagatesIncorrectCodeFailure() {
+        Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("Incorrect OTP code"))
+            .when(paymentVerificationService).verifyOtp(deal, buyer, "000000");
+
+        assertThatThrownBy(() -> dealService.verifyPaymentOtp(buyer, deal.getDealCode(), "000000"))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void markPaymentSecured_rejectsNonBuyer() {
         Deal deal = buyerCreatedDeal(DealStatus.AWAITING_BUYER_PAYMENT, DeliveryMethod.MEETUP);
         mockFindDeal(deal);
@@ -217,7 +284,11 @@ class DealServiceTest {
 
         verify(paymentService).charge(deal, buyer);
         assertThat(response.status()).isEqualTo(DealStatus.PAYMENT_SECURED);
+        assertThat(response.trackerStep()).isEqualTo(TrackerStep.PAID);
         assertThat(deal.getStatus()).isEqualTo(DealStatus.PAYMENT_SECURED);
+        verify(eventPublisher).publishEvent(new DealPaymentConfirmedEvent(
+            10L, "DEAL0001", "Widget", new BigDecimal("100.00"), 24, buyer.getId(), DealRole.BUYER, seller.getPhoneNumber()
+        ));
     }
 
     @Test
@@ -251,6 +322,7 @@ class DealServiceTest {
         assertThatThrownBy(() -> dealService.markPaymentSecured(buyer, deal.getDealCode()))
             .isInstanceOf(IllegalArgumentException.class);
         assertThat(deal.getStatus()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
+        verify(eventPublisher, never()).publishEvent(any(DealPaymentConfirmedEvent.class));
     }
 
     @Test
@@ -265,6 +337,7 @@ class DealServiceTest {
         assertThat(response.pendingPaymentUrl()).isEqualTo("https://checkout.paystack.com/abc123");
         assertThat(response.status()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
         assertThat(deal.getStatus()).isEqualTo(DealStatus.AWAITING_BUYER_PAYMENT);
+        verify(eventPublisher, never()).publishEvent(any(DealPaymentConfirmedEvent.class));
     }
 
     @Test
@@ -287,6 +360,9 @@ class DealServiceTest {
         DealResponse response = dealService.confirmPayment(buyer, deal.getDealCode(), "ref-1");
 
         assertThat(response.status()).isEqualTo(DealStatus.PAYMENT_SECURED);
+        verify(eventPublisher).publishEvent(new DealPaymentConfirmedEvent(
+            10L, "DEAL0001", "Widget", new BigDecimal("100.00"), 24, buyer.getId(), DealRole.BUYER, seller.getPhoneNumber()
+        ));
     }
 
     @Test
@@ -613,6 +689,38 @@ class DealServiceTest {
         assertThatThrownBy(() -> dealService.sendMessage(stranger, deal.getDealCode(), new CreateMessageRequest("hi")))
             .isInstanceOf(IllegalArgumentException.class);
         verify(messageRepository, never()).save(any());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void sendMessage_recordsAuditEvent() {
+        Deal deal = buyerCreatedDeal(DealStatus.PAYMENT_SECURED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        DealMessage message = new DealMessage(deal.getId(), buyer.getId(), "hello");
+        ReflectionTestUtils.setField(message, "id", 99L);
+        when(messageRepository.save(any(DealMessage.class))).thenReturn(message);
+
+        dealService.sendMessage(buyer, deal.getDealCode(), new CreateMessageRequest("hello"));
+
+        verify(auditService).record(
+            eq(deal.getId()),
+            eq(com.kammo.kammobackend.audit.DealAuditEventType.MESSAGE_SENT),
+            eq(buyer.getId()),
+            any(),
+            any()
+        );
+    }
+
+    @Test
+    void getAuditTrail_delegatesToAuditServiceUsingDealId() {
+        Deal deal = buyerCreatedDeal(DealStatus.COMPLETED, DeliveryMethod.MEETUP);
+        mockFindDeal(deal);
+        List<com.kammo.kammobackend.audit.DealAuditEventResponse> trail = List.of();
+        when(auditService.getAuditTrail(deal.getId())).thenReturn(trail);
+
+        List<com.kammo.kammobackend.audit.DealAuditEventResponse> result = dealService.getAuditTrail(deal.getDealCode());
+
+        assertThat(result).isSameAs(trail);
     }
 
     @Test

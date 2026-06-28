@@ -3,28 +3,31 @@ import { Check } from "lucide-react-native";
 import { colors } from "../theme";
 
 const STEPS = [
-  { key: "CREATED", title: "Deal created", desc: "Link shared with other party" },
-  { key: "PAYMENT", title: "Payment secured", desc: "Funds held by payment partner" },
+  { key: "INITIATED", title: "Deal created", desc: "Link shared with other party" },
+  { key: "PAID", title: "Payment secured", desc: "Funds held by payment partner" },
   { key: "TRANSIT", title: "In transit", desc: "Item shipped or ready for collection" },
-  { key: "DELIVERED", title: "Delivered", desc: "Buyer confirms receipt" },
-  { key: "COMPLETED", title: "Completed", desc: "Funds released to seller" },
+  { key: "INSPECT", title: "Delivered", desc: "Buyer confirms receipt" },
+  { key: "RELEASED", title: "Completed", desc: "Funds released to seller" },
 ];
 
-function stepState(status, index) {
-  const order = ["CREATED", "AWAITING_BUYER_PAYMENT", "BUYER_ACCEPTED", "SELLER_ACCEPTED", "PAYMENT_SECURED", "AWAITING_COLLECTION", "IN_TRANSIT", "DELIVERED", "COMPLETED"];
-  const idx = order.indexOf(status);
-  const thresholds = [0, 2, 5, 7, 8];
-  const t = thresholds[index];
-  if (idx >= t + 1 || status === "COMPLETED") return "done";
-  if (idx >= t) return "live";
+const STEP_ORDER = STEPS.map((s) => s.key);
+
+// Tracker step comes from the backend's DealStatus -> TrackerStep mapping
+// (see backend DealStatus.toTrackerStep()). DISPUTED/ENDED are exception
+// states outside the 5-step happy path, so no step is marked "live" for them.
+function stepState(trackerStep, index) {
+  const idx = STEP_ORDER.indexOf(trackerStep);
+  if (idx === -1) return "wait";
+  if (index < idx) return "done";
+  if (index === idx) return trackerStep === "RELEASED" ? "done" : "live";
   return "wait";
 }
 
-export default function DealTimeline({ status }) {
+export default function DealTimeline({ trackerStep }) {
   return (
     <View style={styles.wrap}>
       {STEPS.map((step, i) => {
-        const state = stepState(status, i);
+        const state = stepState(trackerStep, i);
         const isLast = i === STEPS.length - 1;
         return (
           <View key={step.key} style={styles.step}>

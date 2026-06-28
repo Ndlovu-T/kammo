@@ -9,7 +9,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
@@ -50,16 +49,25 @@ public class PaystackPaymentProvider implements PaymentProvider {
     }
 
     @Override
-    public PaymentResult charge(Deal deal, AppUser payer) {
-        String reference = "KAMMO-" + deal.getDealCode() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    public PaymentResult charge(Deal deal, AppUser payer, String reference) {
+        return initializeTransaction(payer.getEmail(), toSubunits(DealPricing.totalToPay(deal)), reference, "kammo://deal/callback");
+    }
+
+    @Override
+    public PaymentResult chargeDirect(AppUser payer, BigDecimal amount, String reference) {
+        return initializeTransaction(payer.getEmail(), toSubunits(amount), reference, "kammo://wallet/callback");
+    }
+
+    private PaymentResult initializeTransaction(String email, long amountSubunits, String reference, String callbackUrl) {
         try {
             Map<String, Object> response = restClient.post()
                 .uri("/transaction/initialize")
                 .body(Map.of(
-                    "email", payer.getEmail(),
-                    "amount", toSubunits(DealPricing.totalToPay(deal)),
+                    "email", email,
+                    "amount", amountSubunits,
                     "currency", "ZAR",
-                    "reference", reference
+                    "reference", reference,
+                    "callback_url", callbackUrl
                 ))
                 .retrieve()
                 .body(JSON_MAP);
